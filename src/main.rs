@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 use serde_bencode::value;
 use serde_json;
 use std::{collections::HashMap, env};
@@ -19,7 +20,7 @@ fn main() {
             Some(value) => {
                 if value.is_digit(10){
                 let decoded_value : String = serde_bencode::from_str(&encoded_value).unwrap();
-                println!("{}", decoded_value);
+                println!("{}", serde_json::Value::String(decoded_value));
                 }
                 else if value.eq(&list) {
                     let decoded_value : Vec<String> = serde_bencode::from_str(&encoded_value).unwrap();
