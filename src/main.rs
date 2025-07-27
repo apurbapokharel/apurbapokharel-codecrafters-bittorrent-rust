@@ -9,13 +9,6 @@ use std::{collections::HashMap, env};
 fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
     match &encoded_value.chars().next() {
         Some('i') => {
-            // if let Some(rest) = encoded_value.strip_prefix('i'){
-            //     if let Some((digits, remaining)) = rest.split_once('e'){
-            //         if let Ok(n) = digits.parse::<i64>(){
-            //             return (n.into(), remaining);
-            //         }
-            //     }
-            // }
             if let Some((digit, rest)) = 
                 encoded_value.
                     split_at(1)
@@ -42,9 +35,19 @@ fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
             return (res.into(), &rem[1..])
 
         }
-        // Some('d') => {
-
-        // }
+        Some('d') => {
+            let mut dict = serde_json::Map::new();
+            let mut rem = encoded_value.split_at(1).1;
+            while !rem.is_empty() && !rem.starts_with('e'){
+                let (key, rest) = decode_bencoded_value(rem);
+                let (value, rest) = decode_bencoded_value(rest);
+                if let serde_json::Value::String(key_string) = key{
+                    dict.insert(key_string, value);
+                }
+                rem = rest;
+            }
+            return (dict.into(), &rem[1..])
+        }
         Some('0'..='9') => {
             if let Some((len, rest)) = encoded_value.split_once(':'){
                 if let Ok(len) = len.parse::<usize>() {
