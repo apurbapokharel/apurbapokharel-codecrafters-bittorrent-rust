@@ -1,11 +1,37 @@
 #![allow(unused_imports)]
+use codecrafters_bittorrent::torrent::Torrent;
 use serde::de;
 use serde_bencode::value;
 use serde_json::{self, Number, Value};
-use std::{collections::HashMap, env};
+use std::{collections::HashMap, env, fs};
 
+// Usage: your_program.sh decode "<encoded_value>"
 
+fn main() -> anyhow::Result<()> {
+    let args: Vec<String> = env::args().collect();
+    let command = &args[1];
+   
+    if command == "decode" {
+        let encoded_value = &args[2];
+        let decoded_value = decode_bencoded_value(&encoded_value).0;
+        println!("{decoded_value}");
+    } 
+    else if command == "info" {
+        let tor = Torrent::new(&args[2])?;
+        println!("Tracker URL: {}", &tor.announce);
+        println!("Length: {}", &tor.info.length);
+        // println!("Hash: {:?}", &tor.info.pieces);
+    } 
+    else {
+        panic!("unknown command: {}", args[1])
+    }
+    Ok(())
+}
 
+//string have 4:home
+//numbers have i-3e
+//list [a,b] = l1:a1:be
+//dictionary {'cow': 'moo', 'spam': 'eggs'} = d3:cow3:moo4:spam4:eggse 
 fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
     match &encoded_value.chars().next() {
         Some('i') => {
@@ -43,6 +69,8 @@ fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
                 let (value, rest) = decode_bencoded_value(rest);
                 if let serde_json::Value::String(key_string) = key{
                     dict.insert(key_string, value);
+                } else{
+                    panic!("Dict keys should be strings")
                 }
                 rem = rest;
             }
@@ -51,30 +79,13 @@ fn decode_bencoded_value(encoded_value: &str) -> (serde_json::Value, &str) {
         Some('0'..='9') => {
             if let Some((len, rest)) = encoded_value.split_once(':'){
                 if let Ok(len) = len.parse::<usize>() {
-                    return (serde_json::Value::String(rest[..len].to_string()), &rest[len..]);  
+                    return (rest[..len].to_string().into(), &rest[len..]);  
                 }
             }
         }
         _ => {}
     }    
-    panic!("Unhandled encoded value: {}", encoded_value);
+    panic!("Unhandled encoded value: {}", encoded_value)
 }
 
-// Usage: your_program.sh decode "<encoded_value>"
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    let command = &args[1];
-   
-    //string have 4:home
-    //numbers have i-3e
-    //list [a,b] = l1:a1:be
-    //dictionary {'cow': 'moo', 'spam': 'eggs'} = d3:cow3:moo4:spam4:eggse 
-    if command == "decode" {
-        eprintln!("Logs from your program will appear here!");
-        let encoded_value = &args[2];
-        let decoded_value = decode_bencoded_value(encoded_value).0;
-        println!("{decoded_value}");
-    } else {
-        println!("unknown command: {}", args[1])
-    }
-}
+
