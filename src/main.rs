@@ -23,16 +23,24 @@ fn main() -> anyhow::Result<()> {
 
         let tor: Torrent = serde_bencode::from_bytes(&content)
             .context("Failed to convert file to a struct")?;
-
+        
         let info_bencoded_bytes = serde_bencode::to_bytes(&tor.info)
             .context("Info Bencode failed")?;
         let mut hasher = Sha1::new();
         hasher.update(info_bencoded_bytes);
         let result = hasher.finalize();
 
+        let piece_length =  &tor.info.pieces_length;
         println!("Tracker URL: {}", &tor.announce);
         println!("Length: {}", &tor.info.length);
         println!("Info Hash: {}", hex::encode(result));
+        println!("Piece Length: {}", &piece_length);
+        println!("Piece Hashes:");
+
+        for piece in &tor.info.pieces.0 {
+            println!("{}", hex::encode(piece));
+        }
+
     } 
     else {
         panic!("unknown command: {}", args[1])
