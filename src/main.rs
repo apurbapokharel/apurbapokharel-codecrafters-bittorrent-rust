@@ -19,7 +19,7 @@ fn main() -> anyhow::Result<()> {
     else if command == "info" {
         let content = fs::read(&args[2])
             .context("Failed to read file")?;
-        println!("{:?}",content.len());
+        // println!("{:?}",content.len());
 
         let tor: Torrent = serde_bencode::from_bytes(&content)
             .context("Failed to convert file to a struct")?;
