@@ -1,8 +1,4 @@
-use std:: {fs};
-use serde::{Serialize, Deserialize, Deserializer, Serializer};
-use anyhow::{Result};
-use crate::{error::MyError};
-use serde_bencode::value::Value;
+use serde::{Serialize, Deserialize};
 pub use pieces::Pieces;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -13,7 +9,7 @@ pub struct Torrent {
     pub info: Info,
 }
 
-#[derive(Debug,Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Info{
     pub length: usize,
 
@@ -26,24 +22,6 @@ pub struct Info{
 
     // concatenated SHA-1 hashes of each piece
     pub pieces: Pieces,
-}
-
-impl Torrent {
-    pub fn new(file_path: &str) -> Result<Self, MyError> {
-        let content = fs::read(file_path)
-            .map_err(|e| {
-                eprintln!("Failed to read file: {e}");
-                MyError::FileError
-            })?;
-
-        let torrent: Torrent = serde_bencode::from_bytes(&content)
-            .map_err(|e| {
-                eprintln!("Failed to parse bencode: {e}");
-                MyError::InvalidInput
-            })?;
-
-        Ok(torrent)
-    }
 }
 
 mod pieces{
@@ -70,14 +48,13 @@ mod pieces{
                         return Err(E::custom(format!("Not a multiple of 20")))
                     }
 
-                    println!("after1 {:?}", v);
-                    Ok(
+                    let pieces = 
                         Pieces( 
-                        v.chunks_exact(20)
-                        .map(|chunk| chunk.try_into().unwrap())
-                        .collect()
-                        )
-                    )
+                            v.chunks_exact(20)
+                            .map(|chunk| chunk.try_into().unwrap())
+                            .collect()
+                        );
+                    Ok(pieces)
         }
     }
 
@@ -87,12 +64,7 @@ mod pieces{
         where
             D: serde::Deserializer<'de>,
         {
-            // deserializer.deserialize_bytes(IPieces)
-            let visitor = IPieces;
-            print!("before");
-            let docs = deserializer.deserialize_bytes(visitor)?;
-            print!("after");
-            Ok(docs)
+            deserializer.deserialize_bytes(IPieces)
         }
     }
 

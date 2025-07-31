@@ -1,31 +1,44 @@
 #![allow(unused_imports)]
 use codecrafters_bittorrent::torrent::Torrent;
-use serde::de;
+use serde::{de, Serialize, Serializer};
 use serde_bencode::value;
 use serde_json::{self, Number, Value};
-use std::{collections::HashMap, env, fs};
+use std::{collections::HashMap, env, fs, path::PathBuf};
+use anyhow::Context;
+use sha1::{Digest, Sha1};
+use hex;
 
-// Usage: your_program.sh decode "<encoded_value>"
-
-fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {  
     let args: Vec<String> = env::args().collect();
     let command = &args[1];
-   
     if command == "decode" {
         let encoded_value = &args[2];
         let decoded_value = decode_bencoded_value(&encoded_value).0;
         println!("{decoded_value}");
     } 
     else if command == "info" {
-        let tor = Torrent::new(&args[2])?;
+        let content = fs::read(&args[2])
+            .context("Failed to read file")?;
+        println!("{:?}",content.len());
+
+        let tor: Torrent = serde_bencode::from_bytes(&content)
+            .context("Failed to convert file to a struct")?;
+
+        let info_bencoded_bytes = serde_bencode::to_bytes(&tor.info)
+            .context("Info Bencode failed")?;
+        let mut hasher = Sha1::new();
+        hasher.update(info_bencoded_bytes);
+        let result = hasher.finalize();
+
         println!("Tracker URL: {}", &tor.announce);
         println!("Length: {}", &tor.info.length);
-        // println!("Hash: {:?}", &tor.info.pieces);
+        println!("Info Hash: {:?}", hex::encode(result));
     } 
     else {
         panic!("unknown command: {}", args[1])
     }
     Ok(())
+    
 }
 
 //string have 4:home
