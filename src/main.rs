@@ -32,7 +32,7 @@ fn main() -> anyhow::Result<()> {
 
         println!("Tracker URL: {}", &tor.announce);
         println!("Length: {}", &tor.info.length);
-        println!("Info Hash: {:?}", hex::encode(result));
+        println!("Info Hash: {}", hex::encode(result));
     } 
     else {
         panic!("unknown command: {}", args[1])
