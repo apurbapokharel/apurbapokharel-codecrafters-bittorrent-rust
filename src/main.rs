@@ -1,52 +1,112 @@
 #![allow(unused_imports)]
-use codecrafters_bittorrent::torrent::Torrent;
-use serde::{de, Serialize, Serializer};
+use codecrafters_bittorrent::{
+        torrent::Torrent, 
+        request::Request, 
+        request::Response};
+use reqwest::Client;
+use serde::{de, Serialize, Serializer, Deserialize};
 use serde_bencode::value;
 use serde_json::{self, Number, Value};
-use std::{collections::HashMap, env, fs, path::PathBuf};
+use core::fmt;
+use std::{collections::HashMap, env, fs, path::PathBuf, fmt::Display};
 use anyhow::Context;
-use sha1::{Digest, Sha1};
 use hex;
+use clap::{Arg, Parser, Subcommand};
+use reqwest::Url;
+use urlencoding::encode_binary;
 
-fn main() -> anyhow::Result<()> {  
-    let args: Vec<String> = env::args().collect();
-    let command = &args[1];
-    if command == "decode" {
-        let encoded_value = &args[2];
-        let decoded_value = decode_bencoded_value(&encoded_value).0;
-        println!("{decoded_value}");
-    } 
-    else if command == "info" {
-        let content = fs::read(&args[2])
-            .context("Failed to read file")?;
-        // println!("{:?}",content.len());
+#[derive(Debug, Parser)]
+#[command(version, about, long_about = None)]
+struct Args {
+    #[command(subcommand)]
+    operation: Type
+}
 
-        let tor: Torrent = serde_bencode::from_bytes(&content)
-            .context("Failed to convert file to a struct")?;
-        
-        let info_bencoded_bytes = serde_bencode::to_bytes(&tor.info)
-            .context("Info Bencode failed")?;
-        let mut hasher = Sha1::new();
-        hasher.update(info_bencoded_bytes);
-        let result = hasher.finalize();
+#[derive(Debug, Subcommand)]
+enum Type {
+    Decode{
+        decode: String
+    },
+    Info{
+        info: String
+    },
+    Peers{
+        info: String
+    }
+}
 
-        let piece_length =  &tor.info.pieces_length;
-        println!("Tracker URL: {}", &tor.announce);
-        println!("Length: {}", &tor.info.length);
-        println!("Info Hash: {}", hex::encode(result));
-        println!("Piece Length: {}", &piece_length);
-        println!("Piece Hashes:");
 
-        for piece in &tor.info.pieces.0 {
-            println!("{}", hex::encode(piece));
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {  
+    let arg = Args::parse();
+    // println!("{:?}",arg);
+    match &arg.operation {
+        Type::Decode { decode } => {
+            let decoded_value = decode_bencoded_value(&decode).0;
+            println!("{decoded_value}");
+        },
+        Type::Info { info } => {
+            let content = fs::read(info)
+                .context("Read file")?;
+            let tor: Torrent = serde_bencode::from_bytes(&content)
+                .context("Convert file to a struct")?;
+
+            let info_hash = tor.info_hash();
+            let piece_length =  &tor.info.pieces_length;
+            println!("Tracker URL: {}", &tor.announce);
+            println!("Length: {}", &tor.info.length);
+            println!("Info Hash: {}", hex::encode(info_hash));
+            println!("Piece Length: {}", &piece_length);
+            println!("Piece Hashes:");
+
+            for piece in &tor.info.pieces.0 {
+                println!("{}", hex::encode(piece));
+            }
+        },
+        Type::Peers { info } => {
+            let content = fs::read(info)
+                .context("Reading file")?;
+            let tor: Torrent = serde_bencode::from_bytes(&content)
+                .context("Convert file to a struct")?;
+            
+            // let info_bencoded_bytes = serde_bencode::to_bytes(&tor.info).context("Info Bencode failed")?;
+            // let mut hasher = Sha1::new();
+            // hasher.update(info_bencoded_bytes);
+            // let result = hasher.finalize();
+            let info_hash = tor.info_hash();
+            let left = tor.info.length.clone();
+            let encoded_info_hash = encode_binary(&info_hash).into_owned();
+            let request_body = Request{
+                peer_id: "123456789abcdefghijk".to_string(),
+                port: 6881,
+                downloaded: 0,
+                uploaded: 0,
+                left: left,
+                compact: 1
+            };
+            let header = serde_urlencoded::to_string(&request_body).context("Serder Url Encoding")?;
+            // println!("TO {:?}", header);
+
+            let url = format!(
+                "{}?{}&info_hash={}",
+                tor.announce,
+                header,
+                encoded_info_hash
+            );
+            let response = reqwest::get(url).await.context("Query Tracker")?;
+            let response = response.bytes().await.context("Fetch tracker response")?;
+            let response: Response = serde_bencode::from_bytes(&response).context("Decoding response to response struct")?;
+            for (peer, port) in &response.peers.0{
+                let a = format!(
+                    "{}:{}",
+                    peer,
+                    port
+                );
+                println!("{}", a);
+            }
         }
-
-    } 
-    else {
-        panic!("unknown command: {}", args[1])
     }
     Ok(())
-    
 }
 
 //string have 4:home

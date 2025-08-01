@@ -1,5 +1,6 @@
 use serde::{Serialize, Deserialize};
 pub use pieces::Pieces;
+use sha1::{Digest, Sha1};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Torrent {
@@ -7,6 +8,17 @@ pub struct Torrent {
     pub announce: String,
 
     pub info: Info,
+}
+
+impl Torrent{
+    pub fn info_hash(&self) -> [u8;20]{
+        let info_bencoded_bytes = serde_bencode::to_bytes(&self.info)
+            .expect("Info Bencode failed");
+        let mut hasher = Sha1::new();
+        hasher.update(info_bencoded_bytes);
+        hasher.finalize().try_into().expect("Type conversion failed")
+
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -25,9 +37,8 @@ pub struct Info{
 }
 
 mod pieces{
-    use serde::de::{self, Deserialize, Deserializer, Visitor};
+    use serde::de::{ Deserialize};
     use serde::ser::{Serialize, Serializer};
-    use std::fmt;
 
     #[derive(Debug)]
     pub struct Pieces(pub Vec<[u8;20]>);
