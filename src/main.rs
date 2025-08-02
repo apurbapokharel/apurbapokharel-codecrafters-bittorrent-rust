@@ -122,7 +122,7 @@ async fn main() -> anyhow::Result<()> {
             let mut res = [0u8; 68];
             tcp_stream.read_exact(&mut res).await.context("Read from peers")?;
             let peer_id  = hex::encode(&res[48..]);
-            println!("Peer ID:{} ", peer_id);
+            println!("Peer ID: {}", peer_id);
         }
     }
     Ok(())
