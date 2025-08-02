@@ -1,18 +1,12 @@
-#![allow(unused_imports)]
 use codecrafters_bittorrent::{
-        torrent::Torrent, 
-        request::Request, 
-        request::Response};
-use reqwest::Client;
-use serde::{de, Serialize, Serializer, Deserialize};
-use serde_bencode::value;
-use serde_json::{self, Number, Value};
-use core::fmt;
-use std::{collections::HashMap, env, fs, path::PathBuf, fmt::Display};
+        handshake::Handshake, request::{Request, Response}, torrent::Torrent};
+use serde::{Serialize, Deserialize};
+use serde_json::{self};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
+use std::{fs, net::{SocketAddrV4}};
 use anyhow::Context;
 use hex;
-use clap::{Arg, Parser, Subcommand};
-use reqwest::Url;
+use clap::{Parser, Subcommand};
 use urlencoding::encode_binary;
 
 #[derive(Debug, Parser)]
@@ -32,9 +26,18 @@ enum Type {
     },
     Peers{
         info: String
+    },
+    Handshake{
+        info: String,
+        peers: SocketAddrV4
     }
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Dummy {
+    pub name: String,
+    pub num: u16
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {  
@@ -69,10 +72,6 @@ async fn main() -> anyhow::Result<()> {
             let tor: Torrent = serde_bencode::from_bytes(&content)
                 .context("Convert file to a struct")?;
             
-            // let info_bencoded_bytes = serde_bencode::to_bytes(&tor.info).context("Info Bencode failed")?;
-            // let mut hasher = Sha1::new();
-            // hasher.update(info_bencoded_bytes);
-            // let result = hasher.finalize();
             let info_hash = tor.info_hash();
             let left = tor.info.length.clone();
             let encoded_info_hash = encode_binary(&info_hash).into_owned();
@@ -85,8 +84,6 @@ async fn main() -> anyhow::Result<()> {
                 compact: 1
             };
             let header = serde_urlencoded::to_string(&request_body).context("Serder Url Encoding")?;
-            // println!("TO {:?}", header);
-
             let url = format!(
                 "{}?{}&info_hash={}",
                 tor.announce,
@@ -96,19 +93,41 @@ async fn main() -> anyhow::Result<()> {
             let response = reqwest::get(url).await.context("Query Tracker")?;
             let response = response.bytes().await.context("Fetch tracker response")?;
             let response: Response = serde_bencode::from_bytes(&response).context("Decoding response to response struct")?;
-            for (peer, port) in &response.peers.0{
+            for socket_address in &response.peers.0{
                 let a = format!(
                     "{}:{}",
-                    peer,
-                    port
+                    socket_address.ip(),
+                    socket_address.port()
                 );
                 println!("{}", a);
             }
+        },
+        Type::Handshake { info, peers } => {
+            let content = fs::read(info)
+                .context("Reading file")?;
+            let tor: Torrent = serde_bencode::from_bytes(&content)
+                .context("Convert file to a struct")?;
+            let info_hash = tor.info_hash();
+            let mut tcp_stream = TcpStream::connect(peers).await.context("TCP connection to peer")?;
+            let reserved: [u8; 8] = [0; 8];
+            let peer_id: [u8; 20]  = *b"ABCDEFGHIJKLMNOPQRST"; // exactly 20 bytes
+            let handshake_message = Handshake{
+                protocol_name: *b"BitTorrent protocol",
+                protocol_length: 19,
+                reserved: reserved,
+                info_hash: info_hash,
+                peer_id: peer_id
+            };
+            tcp_stream.write_all(&handshake_message.as_bytes()).await.context("Sending Handshake")?;
+            let mut res = [0u8; 68];
+            tcp_stream.read_exact(&mut res).await.context("Read from peers")?;
+            let peer_id  = hex::encode(&res[48..]);
+            println!("Peer ID:{} ", peer_id);
         }
     }
     Ok(())
 }
-
+ 
 //string have 4:home
 //numbers have i-3e
 //list [a,b] = l1:a1:be

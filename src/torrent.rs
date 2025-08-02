@@ -17,7 +17,6 @@ impl Torrent{
         let mut hasher = Sha1::new();
         hasher.update(info_bencoded_bytes);
         hasher.finalize().try_into().expect("Type conversion failed")
-
     }
 }
 

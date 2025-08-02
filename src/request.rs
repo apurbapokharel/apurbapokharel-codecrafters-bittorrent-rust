@@ -1,5 +1,4 @@
-use clap::builder::styling;
-use serde::{de, Serialize, Serializer, Deserialize};
+use serde::{Serialize, Deserialize};
 use peers::Peers;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Request{
@@ -11,7 +10,7 @@ pub struct Request{
     pub compact: u8
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Response{
     pub interval: usize,
     pub peers: Peers
@@ -20,10 +19,9 @@ pub struct Response{
 mod peers{
     use serde::de::{ Deserialize};
     use serde::ser::{Serialize, Serializer};
-    use std::net::Ipv4Addr;
-    use std::path::Display;
+    use std::net::{Ipv4Addr, SocketAddrV4};
     #[derive(Debug)]
-    pub struct Peers(pub Vec<(Ipv4Addr, u16)>);
+    pub struct Peers(pub Vec<SocketAddrV4>);
     struct IPeers;
 
     impl<'de> serde::de::Visitor<'de> for IPeers {
@@ -41,13 +39,14 @@ mod peers{
                         return Err(E::custom(format!("Not a multiple of 6")))
                     }
 
-                    let mut vector: Vec<(Ipv4Addr, u16)> = Vec::new();
+                    let mut vector: Vec<SocketAddrV4> = Vec::new();
 
                     v.chunks_exact(6).for_each(|chunk| {
                         let a: [u8;4] = chunk[0..4].try_into().unwrap();
                         let a: Ipv4Addr = a.try_into().unwrap();
                         let b: u16 = u16::from_be_bytes(chunk[4..].try_into().unwrap());
-                        vector.push((a,b));
+                        let socket_address = SocketAddrV4::new(a,b);
+                        vector.push(socket_address);
                     });
                             
                     Ok(Peers(vector))
@@ -64,19 +63,19 @@ mod peers{
         }
     }
 
-    // impl Display for Peers{
-
-    // }
-
-    // impl Serialize for Peers {
-    //     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    //     where
-    //         S: Serializer,
-    //     {
-    //         let single_slice = self.0.concat();
-    //         serializer.serialize_bytes(&single_slice)
-    //     }
-    // }
+    impl Serialize for Peers {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let mut single_slice = Vec::with_capacity(6 * self.0.len());
+            for socket_address in &self.0 {
+                single_slice.extend(socket_address.ip().octets());
+                single_slice.extend(socket_address.port().to_be_bytes());
+            }
+            serializer.serialize_bytes(&single_slice)
+        }
+    }
 
 }
 
