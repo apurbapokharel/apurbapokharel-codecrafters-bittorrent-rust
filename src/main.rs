@@ -1,8 +1,11 @@
 use codecrafters_bittorrent::{
-        handshake::Handshake, request::{Request, Response}, torrent::Torrent};
+        handshake::Handshake, message::{self, Message, MessageFramer, MessageTag}, request::{Request, Response}, torrent::Torrent};
 use serde::{Serialize, Deserialize};
 use serde_json::{self};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpStream}};
+use tokio_util::codec::Framed;
+// use futures_util::{stream::StreamExt};
+use futures_util::{stream::StreamExt, sink::SinkExt};
 use std::{fs, net::{SocketAddrV4}};
 use anyhow::Context;
 use hex;
@@ -17,6 +20,7 @@ struct Args {
 }
 
 #[derive(Debug, Subcommand)]
+#[clap(rename_all="snake_case")]
 enum Type {
     Decode{
         decode: String
@@ -30,6 +34,12 @@ enum Type {
     Handshake{
         info: String,
         peers: SocketAddrV4
+    },
+    DownloadPiece{
+        #[arg(short)]
+        output: String,
+        info: String,
+        index: usize
     }
 }
 
@@ -121,8 +131,80 @@ async fn main() -> anyhow::Result<()> {
             tcp_stream.write_all(&handshake_message.as_bytes()).await.context("Sending Handshake")?;
             let mut res = [0u8; 68];
             tcp_stream.read_exact(&mut res).await.context("Read from peers")?;
-            let peer_id  = hex::encode(&res[48..]);
+            let peer_id   = hex::encode(&res[48..]);
             println!("Peer ID: {}", peer_id);
+        },
+        Type::DownloadPiece { output, info, index } => {
+            let content = fs::read(info)
+                .context("Reading file")?;
+            let tor: Torrent = serde_bencode::from_bytes(&content)
+                .context("Convert file to a struct")?;
+            
+            let info_hash = tor.info_hash();
+            let left = tor.info.length.clone();
+            let encoded_info_hash = encode_binary(&info_hash).into_owned();
+            let request_body = Request{
+                peer_id: "123456789abcdefghijk".to_string(),
+                port: 6881,
+                downloaded: 0,
+                uploaded: 0,
+                left: left,
+                compact: 1
+            };
+            let header = serde_urlencoded::to_string(&request_body).context("Serder Url Encoding")?;
+            let url = format!(
+                "{}?{}&info_hash={}",
+                tor.announce,
+                header,
+                encoded_info_hash
+            );
+            let response = reqwest::get(url).await.context("Query Tracker")?;
+            let response = response.bytes().await.context("Fetch tracker response")?;
+            let response: Response = serde_bencode::from_bytes(&response).context("Decoding response to response struct")?;
+            let peer = &response.peers.0[0];
+            let mut tcp_stream = TcpStream::connect(peer).await.context("TCP connection to peer")?;
+            let reserved: [u8; 8] = [0; 8];
+            let peer_id: [u8; 20]  = *b"ABCDEFGHIJKLMNOPQRST"; // exactly 20 bytes
+            let handshake_message = Handshake{
+                protocol_name: *b"BitTorrent protocol",
+                protocol_length: 19,
+                reserved: reserved,
+                info_hash: info_hash,
+                peer_id: peer_id
+            };
+            tcp_stream.write_all(&handshake_message.as_bytes()).await.context("Sending Handshake")?;
+            let mut res = [0u8; 68];
+            tcp_stream.read_exact(&mut res).await.context("Read from peers")?;
+            let peer_id   = hex::encode(&res[48..]);
+            println!("Peer ID: {}", peer_id);
+
+            // wait for the peer to send bitfield message
+            // send an interested message
+            // wait for the peer to send an unchoke meesage
+            // for piece in pieces:
+            // for block in pieces.block:
+            // request block bytes
+            // append data somewhere
+            // end
+            // append all blockdata to the piece, continue for the other piece
+            // end
+            // for each piece: check if received hash == piece hash
+
+            println!("Before");
+            let codec = MessageFramer;
+            let mut tcp_stream = Framed::new(tcp_stream, codec);
+            let message_sent = tcp_stream
+                .next()
+                .await
+                .expect("Expexting a btifield")
+                .context("Message was invalid")?;
+            assert_eq!(message_sent.message_tag, MessageTag::Bitfield);
+            println!("after {:?}", message_sent);
+
+            let interested_message = Message{message_tag: MessageTag::Interested, payload: Vec::new()};
+
+
+            
         }
     }
     Ok(())

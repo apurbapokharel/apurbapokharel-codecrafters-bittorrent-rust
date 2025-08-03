@@ -6,7 +6,6 @@ use sha1::{Digest, Sha1};
 pub struct Torrent {
     /// The URL of the tracker.
     pub announce: String,
-
     pub info: Info,
 }
 
@@ -23,14 +22,11 @@ impl Torrent{
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Info{
     pub length: usize,
-
     /// suggested name
     pub name: String,
-
     /// the # of bytes in each piece
     #[serde(rename = "piece length")]
     pub pieces_length: usize,
-
     // concatenated SHA-1 hashes of each piece
     pub pieces: Pieces,
 }

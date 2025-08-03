@@ -1,3 +1,4 @@
+/// Tracker Request and Response
 use serde::{Serialize, Deserialize};
 use peers::Peers;
 #[derive(Debug, Serialize, Deserialize)]
@@ -39,17 +40,27 @@ mod peers{
                         return Err(E::custom(format!("Not a multiple of 6")))
                     }
 
-                    let mut vector: Vec<SocketAddrV4> = Vec::new();
+                    // let mut vector: Vec<SocketAddrV4> = Vec::new();
 
-                    v.chunks_exact(6).for_each(|chunk| {
-                        let a: [u8;4] = chunk[0..4].try_into().unwrap();
-                        let a: Ipv4Addr = a.try_into().unwrap();
-                        let b: u16 = u16::from_be_bytes(chunk[4..].try_into().unwrap());
-                        let socket_address = SocketAddrV4::new(a,b);
-                        vector.push(socket_address);
-                    });
+                    // v.chunks_exact(6).for_each(|chunk| {
+                    //     let a: [u8;4] = chunk[0..4].try_into().unwrap();
+                    //     let a: Ipv4Addr = a.try_into().unwrap();
+                    //     let b: u16 = u16::from_be_bytes(chunk[4..].try_into().unwrap());
+                    //     let socket_address = SocketAddrV4::new(a,b);
+                    //     vector.push(socket_address);
+                    // });
                             
-                    Ok(Peers(vector))
+                    // Ok(Peers(vector))
+
+                    Ok(Peers(
+                        v.chunks_exact(6).map(|chunk|{
+                            SocketAddrV4::new(
+                                Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]),
+                                u16::from_be_bytes([chunk[4], chunk[5]]),
+                            )
+                        }).collect()
+                    ))
+
         }
     }
 
