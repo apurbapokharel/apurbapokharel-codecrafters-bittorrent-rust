@@ -1,5 +1,8 @@
 use codecrafters_bittorrent::{
-        handshake::Handshake, message::{self, Message, MessageFramer, MessageTag}, request::{Request, Response}, torrent::Torrent};
+        handshake::Handshake, 
+        message::{Message, MessageFramer, MessageTag, ReceivePayload, RequestPayload}, 
+        request::{Request, Response}, 
+        torrent::{Pieces, Torrent}};
 use serde::{Serialize, Deserialize};
 use serde_json::{self};
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpStream}};
@@ -7,10 +10,11 @@ use tokio_util::codec::Framed;
 // use futures_util::{stream::StreamExt};
 use futures_util::{stream::StreamExt, sink::SinkExt};
 use std::{fs, net::{SocketAddrV4}};
-use anyhow::Context;
+use anyhow::{Context};
 use hex;
 use clap::{Parser, Subcommand};
 use urlencoding::encode_binary;
+use sha1::{Digest, Sha1};
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
@@ -176,35 +180,100 @@ async fn main() -> anyhow::Result<()> {
             let mut res = [0u8; 68];
             tcp_stream.read_exact(&mut res).await.context("Read from peers")?;
             let peer_id   = hex::encode(&res[48..]);
-            println!("Peer ID: {}", peer_id);
+            // println!("Peer ID: {}", peer_id);
 
-            // wait for the peer to send bitfield message
-            // send an interested message
-            // wait for the peer to send an unchoke meesage
-            // for piece in pieces:
-            // for block in pieces.block:
-            // request block bytes
-            // append data somewhere
-            // end
-            // append all blockdata to the piece, continue for the other piece
-            // end
-            // for each piece: check if received hash == piece hash
-
-            println!("Before");
             let codec = MessageFramer;
             let mut tcp_stream = Framed::new(tcp_stream, codec);
-            let message_sent = tcp_stream
+            let message_received = tcp_stream
                 .next()
                 .await
                 .expect("Expexting a btifield")
                 .context("Message was invalid")?;
-            assert_eq!(message_sent.message_tag, MessageTag::Bitfield);
-            println!("after {:?}", message_sent);
+            assert_eq!(message_received.message_tag, MessageTag::Bitfield);
 
-            let interested_message = Message{message_tag: MessageTag::Interested, payload: Vec::new()};
+            let message_to_send = Message{message_tag: MessageTag::Interested, payload: Vec::new()};
+            let message_sent = tcp_stream
+                .send(message_to_send)
+                .await;
+            // println!("Sent {:?}", message_sent);
+            assert_eq!(message_sent.unwrap(), ());
 
+            let message_received = tcp_stream
+                .next()
+                .await
+                .expect("Expexting a unchoke")
+                .context("Message was invalid")?;
+            assert_eq!(message_received.message_tag, MessageTag::Unchoke);
 
+            // fetching pieces sequentially
+            // not using any pipelining
             
+            let mut pieces : Vec<u8> = Vec::new(); 
+            let num_of_pieces = *&tor.info.pieces.0.len();
+            for _ in 0..=0{
+                let piece = *index as usize;
+                let piece_size = if piece < num_of_pieces - 1 {
+                    *&tor.info.pieces_length
+                } else {
+                    &tor.info.length - (&tor.info.pieces_length * (num_of_pieces - 1))
+                };
+                println!("Piece index = {} and Piece size = {}", piece, piece_size);
+
+                let num_of_blocks = piece_size.div_ceil(16*1024);
+                // println!("Number of blocks{}",num_of_blocks);
+
+                let mut blocks : Vec<u8> = Vec::new(); 
+                let mut begin = 0;
+                for block in 0..num_of_blocks{
+                    let block_size = if block < num_of_blocks - 1 {
+                        16 * 1024
+                    } else {
+                        piece_size - (16 * 1024 * (num_of_blocks - 1))
+                    };
+                    println!("Block index = {} and Block size = {}", block, block_size);
+                    let request_message = RequestPayload{
+                        index: piece as u32,
+                        begin: begin,
+                        length: block_size as u32
+                    };
+                    let payload = request_message.to_vec();
+                    let message_to_send = Message{message_tag: MessageTag::Request, payload: payload};
+                    let message_sent = tcp_stream
+                        .send(message_to_send)
+                        .await;
+                    // println!("Sent {:?}", message_sent);
+                    assert_eq!(message_sent.unwrap(), ());
+
+                    let mut message_received = tcp_stream
+                        .next()
+                        .await
+                        .expect("Expexting a unchoke")
+                        .context("Message was invalid")?;
+                    assert_eq!(message_received.message_tag, MessageTag::Piece);
+                    assert!(!message_received.payload.is_empty());
+                    
+                    let received_payload = ReceivePayload::new(&mut message_received.payload);
+                    assert_eq!(received_payload.index, piece as u32);
+                    assert_eq!(received_payload.begin, begin);
+                    assert!(!received_payload.block.is_empty());
+                    begin += 16 * 1024;
+
+                    // store each block
+                    blocks.extend_from_slice(&received_payload.block);
+                }
+                // check hash 
+                let mut hasher = Sha1::new();
+                hasher.update(&blocks);
+                let res  = hex::encode(hasher.finalize());
+                assert_eq!(res, hex::encode(tor.info.pieces.0[piece]));
+                // add to slice
+                pieces.extend_from_slice(&blocks);
+                blocks.clear();
+            }
+            tokio::fs::write(&output, pieces)
+                .await
+                .context("write out downloaded piece")?;
+            println!("Piece {index} downloaded to {}.", output);
         }
     }
     Ok(())

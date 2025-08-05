@@ -50,8 +50,9 @@ pub struct Message{
     pub payload: Vec<u8>
 }
 pub struct MessageFramer;
-const MAX: usize = 16 * 1024;
+const MAX: usize = 2 * 16 * 1024; // 2^15
 
+/// The 1st 4 bytes gives message id + playload length
 impl Decoder for MessageFramer {
     type Item = Message;
     type Error = std::io::Error;
@@ -60,6 +61,7 @@ impl Decoder for MessageFramer {
         &mut self,
         src: &mut BytesMut
     ) -> Result<Option<Self::Item>, Self::Error> {
+        // println!("DEcode lenght {}", src.len());
         if src.len() < 5 {
             // Not enough data to read length and tag marker.
             return Ok(None);
@@ -69,7 +71,7 @@ impl Decoder for MessageFramer {
         let mut length_bytes = [0u8; 4];
         length_bytes.copy_from_slice(&src[..4]);
         let length = u32::from_be_bytes(length_bytes) as usize;
-        // println!("Length {}", length);
+        // println!("Payload lenght {}", length);
 
         // Check that the length is not too large to avoid a denial of
         // service attack where the server runs out of memory.
@@ -80,11 +82,11 @@ impl Decoder for MessageFramer {
             ));
         }
 
-        if src.len() < 4 + 1 + length {
+        if src.len() < 4 + length {
             // The full string has not yet arrived.
             // We reserve more space in the buffer. This is not strictly
             // necessary, but is a good idea performance-wise.
-            src.reserve(4 + 1 + length - src.len());
+            src.reserve(4 + length - src.len());
 
             // We inform the Framed that we need more bytes to form the next
             // frame.
@@ -94,13 +96,13 @@ impl Decoder for MessageFramer {
         // Use advance to modify src such that it no longer contains
         // this frame.
         let data = if src.len() > 5 {
-            src[5..5 + length].to_vec()
+            src[5..5 + length - 1].to_vec()
         } else {
             Vec::new()
         };
         // Convert the data to the appropriate Message
         let message_tag = MessageTag::tag_to_type(&src[4]).expect("Invalid msg type");
-        src.advance(5 + length);
+        src.advance(4 + length);
 
         Ok(Some(
             Message{
@@ -118,7 +120,7 @@ impl Encoder<Message> for MessageFramer {
     fn encode(&mut self, message: Message, dst: &mut BytesMut) -> Result<(), Self::Error> {
         // Don't send the message if it is longer than the other end will
         // accept.
-        if message.payload.len() > MAX {
+        if message.payload.len() + 1 > MAX {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!("Payload of length {} is too large.", message.payload.len())
@@ -127,7 +129,7 @@ impl Encoder<Message> for MessageFramer {
 
         // Convert the length into a byte array.
         // The cast to u32 cannot overflow due to the length check above.
-        let len_slice = u32::to_be_bytes(message.payload.len() as u32);
+        let len_slice = u32::to_be_bytes(message.payload.len() as u32 + 1);
 
         // Reserve space in the buffer.
         dst.reserve(5 + message.payload.len());
@@ -140,11 +142,6 @@ impl Encoder<Message> for MessageFramer {
     }
 }
 
-// #[test]
-// fn test_one(){
-//     assert_eq!(1,1,"Not eq");
-
-// }
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,5 +218,48 @@ mod tests {
         let result = decoder.decode(&mut buf).expect("Decoding failed");
 
         assert_eq!(result, None::<Message>)
+    }
+}
+
+pub struct RequestPayload{
+    /// the zero-based piece index
+    pub index: u32,
+    ///  the zero-based byte offset within the piece
+    /// This'll be 0 for the first block, 2^14 for the second block, 2*2^14 for the third block etc.
+    pub begin: u32, 
+    /// the length of the block in bytes
+    /// This'll be 2^14 (16 * 1024) for all blocks except the last one.
+    pub length: u32, 
+}
+
+impl RequestPayload{
+    pub fn to_vec(&self) -> Vec<u8> {
+        // let mut vector: Vec<u8> = Vec::new();
+        let mut buf: [u8; 12] = [0u8; 12];
+        buf[0..4].copy_from_slice(&self.index.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.begin.to_be_bytes());
+        buf[8..12].copy_from_slice(&self.length.to_be_bytes());
+        return buf.into()
+    }
+}
+pub struct ReceivePayload{
+    /// the zero-based piece index
+    pub index: u32,
+    ///  the zero-based byte offset within the piece
+    /// This'll be 0 for the first block, 2^14 for the second block, 2*2^14 for the third block etc.
+    pub begin: u32, 
+    /// the data for the piece, usually 2^14 bytes long
+    pub block: Vec<u8>, 
+}
+
+impl ReceivePayload {
+    pub fn new(payload:&mut Vec<u8>) -> Self{
+        let index = u32::from_be_bytes(payload[0..4].try_into().expect("slice length not 4"));
+        let begin = u32::from_be_bytes(payload[4..8].try_into().expect("slice length not 4"));
+        Self { 
+            index: index, 
+            begin: begin, 
+            block: payload.split_off(8) 
+        }
     }
 }
