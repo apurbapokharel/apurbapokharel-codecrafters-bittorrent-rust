@@ -1,8 +1,5 @@
 use codecrafters_bittorrent::{
-        handshake::Handshake, 
-        message::{Message, MessageFramer, MessageTag, ReceivePayload, RequestPayload}, 
-        request::{Request, Response}, 
-        torrent::{Pieces, Torrent}, 
+        torrent::{Torrent}, 
         utils::{
             establish_handshake, 
             get_peers_from_tracker_url, 
@@ -12,15 +9,10 @@ use codecrafters_bittorrent::{
     };
 use serde::{Serialize, Deserialize};
 use serde_json::{self};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpStream}};
-use tokio_util::codec::Framed;
-use futures_util::{stream::StreamExt, sink::SinkExt};
-use std::{fs, net::{SocketAddrV4}};
+use std::{net::{SocketAddrV4}};
 use anyhow::{Context};
 use hex;
 use clap::{Parser, Subcommand};
-use sha1::{Digest, Sha1};
-use urlencoding::encode_binary;
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]

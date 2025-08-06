@@ -89,7 +89,7 @@ pub async fn establish_handshake_and_download(
     let message_received = tcp_stream
         .next()
         .await
-        .expect("Expexting a btifield")
+        .expect("Expecting a btifield")
         .context("Message was invalid")?;
     assert_eq!(message_received.message_tag, MessageTag::Bitfield);
 
@@ -102,7 +102,7 @@ pub async fn establish_handshake_and_download(
     let message_received = tcp_stream
         .next()
         .await
-        .expect("Expexting a unchoke")
+        .expect("Expecting a unchoke")
         .context("Message was invalid")?;
     assert_eq!(message_received.message_tag, MessageTag::Unchoke);
 
@@ -138,7 +138,7 @@ async fn fetch_a_piece(
     } else {
         &tor.info.length - (&tor.info.pieces_length * (num_of_pieces - 1))
     };
-    // println!("Piece index = {} and Piece size = {}", piece_index, piece_size); 
+    println!("Piece index = {} and Piece size = {}", piece_index, piece_size); 
     let num_of_blocks = piece_size.div_ceil(16*1024);
     // println!("Number of blocks{}",num_of_blocks);
     let mut blocks : Vec<u8> = Vec::new(); 
@@ -149,7 +149,7 @@ async fn fetch_a_piece(
         } else {
             piece_size - (16 * 1024 * (num_of_blocks - 1))
         };
-        // println!("Block index = {} and Block size = {}", block, block_size);
+        println!("Block index = {} and Block size = {}", block, block_size);
         let request_message = RequestPayload{
             index: piece_index as u32,
             begin: begin,
@@ -195,7 +195,8 @@ async fn fetch_all_pieces(
     tcp_stream:&mut Framed<TcpStream, MessageFramer>,
 ) -> anyhow::Result<Vec<u8>>{
     let mut pieces : Vec<u8> = Vec::new(); 
-    let num_of_pieces = *&tor.info.pieces.0.len();        
+    let num_of_pieces = *&tor.info.pieces.0.len();    
+    println!("THe number of pices is {}", num_of_pieces);    
     for piece in 0..num_of_pieces{
         let res = fetch_a_piece(&tor, tcp_stream, piece)
             .await
