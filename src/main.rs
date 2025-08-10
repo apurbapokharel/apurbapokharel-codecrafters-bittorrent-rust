@@ -1,10 +1,9 @@
 use codecrafters_bittorrent::{
         magnet::Magnet, torrent::Torrent, utils::{
-            decode_bencoded_value, establish_handshake, establish_handshake_and_download, get_peers_from_tracker_url, read_and_deserialize_torrent
+            decode_bencoded_value, establish_handshake, establish_handshake_and_download, get_peers_from_magnet, get_peers_from_tracker_url, read_and_deserialize_torrent
         }
     };
 use serde::{Serialize, Deserialize};
-use serde_json::{self};
 use std::{net::{SocketAddrV4}};
 use anyhow::{Context};
 use hex;
@@ -45,6 +44,9 @@ enum Type {
         info: String    
     },
     MagnetParse{
+        magnet: String
+    },
+    MagnetHandshake{
         magnet: String
     }
 }
@@ -93,7 +95,10 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         Type::Handshake { info, peer } => {
-            let (_, peer_id) = establish_handshake(info, peer)
+            let tor: Torrent = read_and_deserialize_torrent(info)
+                .context("Unable to read and deserialize")?;
+            let info_hash = tor.info_hash();
+            let (_, peer_id) = establish_handshake(info_hash, peer)
                 .await
                 .context("Unable to establish handhshake")?;
             println!("Peer ID: {}", peer_id);
@@ -112,6 +117,19 @@ async fn main() -> anyhow::Result<()> {
             let magnet: Magnet = Magnet::new(&magnet).context("Parsing failed")?;
             println!("Tracker URL: {}", &magnet.url);
             println!("Info Hash: {}", &magnet.info_hash);
+        },
+        Type::MagnetHandshake { magnet } => {
+            let magnet: Magnet = Magnet::new(&magnet).context("Parsing failed")?;
+            let response = get_peers_from_magnet(&magnet)
+                .await
+                .context("Failed to get peers")?;
+            let info_hash = magnet.info_hash_to_slice();
+            let peer = &response.peers.0[0];
+            let (_, peer_id) = establish_handshake(info_hash, peer)
+                .await
+                .context("Unable to establish handhshake")?;
+            println!("Peer ID: {}", peer_id);
+
         }
     }
     Ok(())

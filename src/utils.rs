@@ -1,8 +1,5 @@
 use crate::{
-    request::{Response, Request},
-    torrent::Torrent,
-    handshake::Handshake,
-    message::{Message, MessageFramer, MessageTag, ReceivePayload, RequestPayload},  
+    handshake::Handshake, magnet::Magnet, message::{Message, MessageFramer, MessageTag, ReceivePayload, RequestPayload}, request::{Request, Response}, torrent::Torrent  
 };
 use anyhow::{Context};
 use std::{fs, net::{SocketAddrV4}};
@@ -107,10 +104,7 @@ pub async fn get_peers_from_tracker_url(info: &String) -> anyhow::Result<(Respon
     Ok((response, tor))
 } 
 
-pub async fn establish_handshake(info: &String, peer: &SocketAddrV4) -> anyhow::Result<(TcpStream, String)>{
-    let tor: Torrent = read_and_deserialize_torrent(info)
-        .context("Unable to read and deserialize")?;
-    let info_hash = tor.info_hash();
+pub async fn establish_handshake(info_hash: [u8;20], peer: &SocketAddrV4) -> anyhow::Result<(TcpStream, String)>{
     let mut tcp_stream = TcpStream::connect(peer).await.context("TCP connection to peer")?;
     let reserved: [u8; 8] = [0; 8];
     let peer_id: [u8; 20]  = *b"ABCDEFGHIJKLMNOPQRST"; // exactly 20 bytes
@@ -137,9 +131,9 @@ pub async fn establish_handshake_and_download(
         .await
         .context("Unable to get response")?;   
     let peer = &response.peers.0[0];
-
+    let info_hash = &tor.info_hash();
     // establish handshake
-    let (tcp_stream, _peer_id) = establish_handshake(info, peer)
+    let (tcp_stream, _peer_id) = establish_handshake(*info_hash, peer)
         .await
         .context("Unable to establish handhshake")?;
 
@@ -264,4 +258,28 @@ async fn fetch_all_pieces(
         pieces.extend_from_slice(&res);
     }
     Ok(pieces)
+}
+
+pub async fn get_peers_from_magnet(magnet:& Magnet) -> anyhow::Result<Response>{
+    let encoded_info_hash = encode_binary(&magnet.info_hash_to_slice()).into_owned();
+    //TODO: the left is unknown so use a non zero value
+    let request_body = Request{
+        peer_id: "123456789abcdefghijk".to_string(),
+        port: 6881,
+        downloaded: 0,
+        uploaded: 0,
+        left: 1000,
+        compact: 1
+    };
+    let header = serde_urlencoded::to_string(&request_body).context("Serder Url Encoding")?;
+    let url = format!(
+        "{}?info_hash={}&{}",
+        &magnet.url,
+        encoded_info_hash,
+        header
+    );
+    let response = reqwest::get(url).await.context("Query Tracker")?;
+    let response = response.bytes().await.context("Fetch tracker response")?;
+    let response: Response = serde_bencode::from_bytes(&response).context("Decoding response to response struct")?;
+    Ok(response)
 }

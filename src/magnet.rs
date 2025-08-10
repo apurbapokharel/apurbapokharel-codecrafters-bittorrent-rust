@@ -25,7 +25,7 @@ impl Magnet{
                     Some((url, name))
                 })
             }).context("Splitting for hash and name failed")?;     
-            
+
         Ok(
             Self { 
                 url: url_string.into_owned(), 
@@ -34,4 +34,22 @@ impl Magnet{
             }
         )
     }
+
+    pub fn info_hash_to_slice(&self) -> [u8; 20] {
+        let mut a: Vec<u8> = Vec::with_capacity(20);
+
+        self.info_hash
+            .as_bytes()
+            .chunks_exact(2)
+            .for_each(|chunk| {
+                // Convert the two-byte chunk to a &str
+                let hex_str = std::str::from_utf8(chunk).expect("Invalid UTF-8 in info_hash");
+                // Parse it as a hex number (u8)
+                let byte = u8::from_str_radix(hex_str, 16).expect("Invalid hex in info_hash");
+                a.push(byte);
+            });
+
+        a.try_into().expect("Conversion to [u8; 20] failed")
+}
+
 }
