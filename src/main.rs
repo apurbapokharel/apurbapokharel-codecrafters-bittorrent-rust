@@ -98,18 +98,21 @@ async fn main() -> anyhow::Result<()> {
             let tor: Torrent = read_and_deserialize_torrent(info)
                 .context("Unable to read and deserialize")?;
             let info_hash = tor.info_hash();
-            let (_, peer_id) = establish_handshake(info_hash, peer)
+            let reserved: [u8;8] = [0,0,0,0,0,0,0,0];
+            let (_, peer_id) = establish_handshake(info_hash, peer, reserved)
                 .await
                 .context("Unable to establish handhshake")?;
             println!("Peer ID: {}", peer_id);
         },
         Type::DownloadPiece { output, info, index } => {
-            let _res = establish_handshake_and_download(&output, &info, Some(*index))
+            let reserved: [u8;8] = [0,0,0,0,0,0,0,0];
+            let _res = establish_handshake_and_download(&output, &info, Some(*index), reserved)
                 .await
                 .context("Downloading a single piece");
         },
         Type::Download{ output, info} => {
-            let _res = establish_handshake_and_download(&output, &info, None)
+            let reserved: [u8;8] = [0,0,0,0,0,0,0,0];
+            let _res = establish_handshake_and_download(&output, &info, None, reserved)
                 .await
                 .context("Downloading all pieces");
         },
@@ -125,7 +128,8 @@ async fn main() -> anyhow::Result<()> {
                 .context("Failed to get peers")?;
             let info_hash = magnet.info_hash_to_slice();
             let peer = &response.peers.0[0];
-            let (_, peer_id) = establish_handshake(info_hash, peer)
+            let reserved: [u8;8] = [0,0,0,0,0,16,0,0];
+            let (_, peer_id) = establish_handshake(info_hash, peer, reserved)
                 .await
                 .context("Unable to establish handhshake")?;
             println!("Peer ID: {}", peer_id);

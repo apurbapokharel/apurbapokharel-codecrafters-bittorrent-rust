@@ -104,9 +104,8 @@ pub async fn get_peers_from_tracker_url(info: &String) -> anyhow::Result<(Respon
     Ok((response, tor))
 } 
 
-pub async fn establish_handshake(info_hash: [u8;20], peer: &SocketAddrV4) -> anyhow::Result<(TcpStream, String)>{
+pub async fn establish_handshake(info_hash: [u8;20], peer: &SocketAddrV4, reserved: [u8;8]) -> anyhow::Result<(TcpStream, String)>{
     let mut tcp_stream = TcpStream::connect(peer).await.context("TCP connection to peer")?;
-    let reserved: [u8; 8] = [0; 8];
     let peer_id: [u8; 20]  = *b"ABCDEFGHIJKLMNOPQRST"; // exactly 20 bytes
     let handshake_message = Handshake{
         protocol_name: *b"BitTorrent protocol",
@@ -125,7 +124,8 @@ pub async fn establish_handshake(info_hash: [u8;20], peer: &SocketAddrV4) -> any
 pub async fn establish_handshake_and_download(
     output: &String,
     info: &String,
-    index: Option<usize>
+    index: Option<usize>,
+    reserved: [u8;8]
 ) -> anyhow::Result<()>{
     let (response, tor) = get_peers_from_tracker_url(info)
         .await
@@ -133,7 +133,7 @@ pub async fn establish_handshake_and_download(
     let peer = &response.peers.0[0];
     let info_hash = &tor.info_hash();
     // establish handshake
-    let (tcp_stream, _peer_id) = establish_handshake(*info_hash, peer)
+    let (tcp_stream, _peer_id) = establish_handshake(*info_hash, peer, reserved)
         .await
         .context("Unable to establish handhshake")?;
 
