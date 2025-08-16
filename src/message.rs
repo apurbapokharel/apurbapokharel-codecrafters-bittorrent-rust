@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use serde_json::Value;
 use tokio_util::codec::{Decoder, Encoder};
 use bytes::{BytesMut, Buf};
 
@@ -47,12 +50,27 @@ impl MessageTag {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Message{
     pub message_tag: MessageTag,
-    pub payload: Vec<u8>
+    pub payload: Payload
 }
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Payload{
+    SimplePayload(Vec<u8>),
+    //// Used for extension messages
+    ExtendedPayload(ExtensionPayload)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ExtensionPayload{
+    pub extension_id: u8,
+    pub dict: serde_json::Map<String, Value>
+}
+
+
 pub struct MessageFramer;
 const MAX: usize = 2 * 16 * 1024; // 2^15
 
-/// The 1st 4 bytes gives message id + playload length
+/// The 1st 4 bytes gives playload length + message_type 
 impl Decoder for MessageFramer {
     type Item = Message;
     type Error = std::io::Error;
@@ -107,7 +125,7 @@ impl Decoder for MessageFramer {
         Ok(Some(
             Message{
                 message_tag: message_tag,
-                payload: data
+                payload: Payload::SimplePayload(data)
             }
             )
         )
@@ -120,24 +138,29 @@ impl Encoder<Message> for MessageFramer {
     fn encode(&mut self, message: Message, dst: &mut BytesMut) -> Result<(), Self::Error> {
         // Don't send the message if it is longer than the other end will
         // accept.
-        if message.payload.len() + 1 > MAX {
+        let payload = match &message.payload {
+                Payload::SimplePayload(vector) => vector,
+                _ => &Vec::<u8>::new()
+            };
+        let payload_length = *&payload.len();
+        if payload_length + 1 > MAX {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Payload of length {} is too large.", message.payload.len())
+                format!("Payload of length {} is too large.", payload_length)
             ));
         }
 
         // Convert the length into a byte array.
         // The cast to u32 cannot overflow due to the length check above.
-        let len_slice = u32::to_be_bytes(message.payload.len() as u32 + 1);
+        let len_slice = u32::to_be_bytes(payload_length as u32 + 1);
 
         // Reserve space in the buffer.
-        dst.reserve(5 + message.payload.len());
+        dst.reserve(5 + payload_length);
 
         // Write the length and string to the buffer.
         dst.extend_from_slice(&len_slice);
         dst.extend_from_slice(&[MessageTag::type_to_tag(&message.message_tag)]);
-        dst.extend_from_slice(&message.payload);
+        dst.extend_from_slice(&payload);
         Ok(())
     }
 }
@@ -152,7 +175,7 @@ mod tests {
     fn test_my_message_decoder() {
         // Simulate a Bitfield message with payload [0xDE, 0xAD, 0xBE, 0xEF]
         let payload = vec![0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF];
-        let length = payload.len() as u32;
+        let length = payload.len() as u32 + 1;
 
         let mut buf = BytesMut::new();
 
@@ -173,7 +196,7 @@ mod tests {
         match result {
             Some(msg) => {
                 assert_eq!(msg.message_tag, MessageTag::Bitfield);
-                assert_eq!(msg.payload, payload);
+                assert_eq!(msg.payload, Payload::SimplePayload(payload));
             }
             None => panic!("Expected a decoded message, got None"),
         }
@@ -182,8 +205,9 @@ mod tests {
     #[test]
     fn test_my_message_decoder_2() {
         // Simulate a incomplete Bitfield message with payload
+        // we want the total payload to be of 8 bytes but we make it 7 to simulate incompleteness
         let payload = vec![0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE];
-        let length = 8 as u32;
+        let length = 8 as u32 + 1;
 
         let mut buf = BytesMut::new();
 

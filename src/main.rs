@@ -1,9 +1,13 @@
 use codecrafters_bittorrent::{
-        magnet::Magnet, torrent::Torrent, utils::{
+        handshake::Handshake, magnet::Magnet, message::{Message, MessageFramer, MessageTag, Payload}, torrent::Torrent, utils::{
             decode_bencoded_value, establish_handshake, establish_handshake_and_download, get_peers_from_magnet, get_peers_from_tracker_url, read_and_deserialize_torrent
         }
     };
 use serde::{Serialize, Deserialize};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpStream}};
+use tokio_util::codec::Framed;
+use futures_util::{stream::StreamExt, sink::SinkExt};
+
 use std::{net::{SocketAddrV4}};
 use anyhow::{Context};
 use hex;
@@ -26,7 +30,9 @@ enum Type {
         info: String
     },
     Peers{
-        info: String
+        info: String,
+        // #[arg(default_value_t = Reserved::default())]
+        // reserved: Reserved
     },
     Handshake{
         info: String,
@@ -51,11 +57,16 @@ enum Type {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct Dummy {
-    pub name: String,
-    pub num: u16
-}
+// #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize)]
+// pub struct Reserved {
+//     pub bit: [u8;8],
+// }
+
+// impl fmt::Display for Reserved {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         write!(f, "{:?}", self.bit)
+//     }
+// }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {  
@@ -82,6 +93,8 @@ async fn main() -> anyhow::Result<()> {
             }
         },
         Type::Peers { info } => {
+        // Type::Peers { info, reserved } => {
+            // println!("{}", reserved);
             let (response, _) = get_peers_from_tracker_url(info)
                 .await
                 .context("Unable to get response")?;
@@ -129,10 +142,46 @@ async fn main() -> anyhow::Result<()> {
             let info_hash = magnet.info_hash_to_slice();
             let peer = &response.peers.0[0];
             let reserved: [u8;8] = [0,0,0,0,0,16,0,0];
-            let (_, peer_id) = establish_handshake(info_hash, peer, reserved)
-                .await
-                .context("Unable to establish handhshake")?;
+
+
+            let mut tcp_stream = TcpStream::connect(peer).await.context("TCP connection to peer")?;
+            let peer_id: [u8; 20]  = *b"ABCDEFGHIJKLMNOPQRST"; // exactly 20 bytes
+            let handshake_message = Handshake{
+                protocol_name: *b"BitTorrent protocol",
+                protocol_length: 19,
+                reserved: reserved,
+                info_hash: info_hash,
+                peer_id: peer_id
+            };
+            tcp_stream.write_all(&handshake_message.as_bytes()).await.context("Sending Handshake")?;
+            let mut res = [0u8; 68];
+            tcp_stream.read_exact(&mut res).await.context("Read from peers")?;
+            let peer_id   = hex::encode(&res[48..]);
+            let extension = &res[28..48];
             println!("Peer ID: {}", peer_id);
+
+            //send bitfield
+            let bitfield_message = Message{message_tag: MessageTag::Bitfield, payload: Payload::SimplePayload(Vec::new())};
+            let codec = MessageFramer;
+            let mut tcp_stream = Framed::new(tcp_stream, codec);
+            let _ = tcp_stream
+                .send(bitfield_message)
+                .await;
+            //get bitfield
+            let response = tcp_stream
+                .next()
+                .await
+                .expect("Expecting a bitfield message")
+                .context("Failed to get bitfield")?;
+            // assert!(!response.payload.is_empty());
+            //if extension is supported send extension handshake
+            // if extension.eq(&reserved) {
+            //     //send extension handshake
+
+            //     //receive extension handshake
+            // } else{
+            //     println!("Extension not supported");
+            // }
 
         }
     }

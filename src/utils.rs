@@ -1,5 +1,9 @@
 use crate::{
-    handshake::Handshake, magnet::Magnet, message::{Message, MessageFramer, MessageTag, ReceivePayload, RequestPayload}, request::{Request, Response}, torrent::Torrent  
+    handshake::Handshake, 
+    magnet::Magnet, 
+    message::{Message, MessageFramer, MessageTag, ReceivePayload, RequestPayload, Payload}, 
+    request::{Request, Response}, 
+    torrent::Torrent  
 };
 use anyhow::{Context};
 use std::{fs, net::{SocketAddrV4}};
@@ -147,7 +151,7 @@ pub async fn establish_handshake_and_download(
         .context("Message was invalid")?;
     assert_eq!(message_received.message_tag, MessageTag::Bitfield);
 
-    let message_to_send = Message{message_tag: MessageTag::Interested, payload: Vec::new()};
+    let message_to_send = Message{message_tag: MessageTag::Interested, payload: Payload::SimplePayload(Vec::new())};
     let message_sent = tcp_stream
         .send(message_to_send)
         .await;
@@ -210,22 +214,23 @@ async fn fetch_a_piece(
             length: block_size as u32
         };
         let payload = request_message.to_vec();
-        let message_to_send = Message{message_tag: MessageTag::Request, payload: payload};
+        let message_to_send = Message{message_tag: MessageTag::Request, payload: Payload::SimplePayload(payload)};
         let message_sent = tcp_stream
             .send(message_to_send)
             .await;
         // println!("Sent {:?}", message_sent);
         assert_eq!(message_sent.unwrap(), ());
 
-        let mut message_received = tcp_stream
+        let message_received = tcp_stream
             .next()
             .await
             .expect("Expexting a unchoke")
             .context("Message was invalid")?;
         assert_eq!(message_received.message_tag, MessageTag::Piece);
-        assert!(!message_received.payload.is_empty());
+        let Payload::SimplePayload(mut vector) = message_received.payload;
+        assert!(!&vector.is_empty());
         
-        let received_payload = ReceivePayload::new(&mut message_received.payload);
+        let received_payload = ReceivePayload::new(&mut vector);
         assert_eq!(received_payload.index, piece_index as u32);
         assert_eq!(received_payload.begin, begin);
         assert!(!received_payload.block.is_empty());
