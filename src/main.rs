@@ -172,17 +172,23 @@ async fn main() -> anyhow::Result<()> {
                 .await
                 .context("Read from peers")?;
             let peer_id = hex::encode(&res[48..]);
-            let extension = &res[28..48];
+            let info_hash_received = &res[28..48];
+            let peer_reserved_bit = &res[20..28];
+            assert_eq!(info_hash_received, info_hash, "Info Hash Mismatch");
             println!("Peer ID: {}", peer_id);
+            // println!("Peer Info Hash: {:?}", info_hash_received);
+            // println!("Peer Reserved Bit: {:?}", peer_reserved_bit);
 
             //send bitfield
-            let bitfield_message = Message {
-                message_tag: MessageTag::Bitfield,
-                payload: Payload::SimplePayload(Vec::new()),
-            };
+            // no need to do for this challenge
             let codec = MessageFramer;
             let mut tcp_stream = Framed::new(tcp_stream, codec);
-            let _ = tcp_stream.send(bitfield_message).await;
+            // let bitfield_message = Message {
+            //     message_tag: MessageTag::Bitfield,
+            //     payload: Payload::SimplePayload(Vec::new()),
+            // };
+            // let _ = tcp_stream.send(bitfield_message).await;
+
             //get bitfield
             let response = tcp_stream
                 .next()
@@ -190,21 +196,21 @@ async fn main() -> anyhow::Result<()> {
                 .expect("Expecting a bitfield message")
                 .context("Failed to get bitfield")?;
             // assert!(!response.payload.is_empty());
-            if extension.eq(&reserved) {
+            if peer_reserved_bit[2].eq(&reserved[2]) {
                 //send extension handshake
                 let extension_handshake_dict = "d1:md11:ut_metadatai13eee";
                 let extension_payload = ExtensionPayload {
-                    extension_id: 1,
+                    extension_id: 0,
                     dict: extension_handshake_dict.into(),
                 };
                 let extension_handshake = Message {
                     message_tag: MessageTag::Extension,
                     payload: Payload::ExtendedPayload(extension_payload),
                 };
-                // let _ = tcp_stream.send(extension_handshake).await;
+                let _ = tcp_stream.send(extension_handshake).await;
                 //receive extension handshake
             } else {
-                println!("Extension not supported {:?}", extension);
+                println!("Extension not supported {:?}", peer_reserved_bit);
             }
         }
     }

@@ -84,7 +84,7 @@ impl ExtensionPayload {
 
     pub fn from_utf8(v: &[u8]) -> Self {
         let extension_message_id: u8 = u8::from_be(v[0]);
-        assert_eq!(extension_message_id, 1, "Extension Message id has to be 1");
+        assert_eq!(extension_message_id, 0, "Extension Message id has to be 1");
         let benconded_dictionary =
             String::from_utf8(v[1..].into()).expect("Parsing utf8 to string");
         // let benconded_dictionary = utils::decode_bencoded_value(&benconded_dictionary).0;
@@ -165,7 +165,7 @@ mod extension_payload_test {
         let bencoded_dict = "d1:md11:ut_metadatai13eee";
         // eprintln!("{:?}", bencoded_dict);
         let my_struct = ExtensionPayload {
-            extension_id: 1,
+            extension_id: 0,
             dict: bencoded_dict.into(),
         };
         let seriazlied_struct = my_struct.to_vector();
