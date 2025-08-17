@@ -1,11 +1,12 @@
-use std::collections::HashMap;
-
+use bytes::{Buf, BytesMut};
 use serde_json::Value;
+use std::collections::HashMap;
 use tokio_util::codec::{Decoder, Encoder};
-use bytes::{BytesMut, Buf};
+
+use crate::utils;
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum MessageTag{
+pub enum MessageTag {
     Choke,
     Unchoke,
     Interested,
@@ -14,25 +15,27 @@ pub enum MessageTag{
     Bitfield,
     Request,
     Piece,
-    Cancel
+    Cancel,
+    Extension,
 }
 
 impl MessageTag {
-    pub fn type_to_tag(&self) -> u8{
+    pub fn type_to_tag(&self) -> u8 {
         match self {
-            Self::Choke                 => 0,
-            Self::Unchoke               => 1,
-            Self::Interested            => 2,
-            Self::NotInterested         => 3,
-            Self::Have                  => 4,
-            Self::Bitfield              => 5,
-            Self::Request               => 6,
-            Self::Piece                 => 7,
-            Self::Cancel                => 8,
+            Self::Choke => 0,
+            Self::Unchoke => 1,
+            Self::Interested => 2,
+            Self::NotInterested => 3,
+            Self::Have => 4,
+            Self::Bitfield => 5,
+            Self::Request => 6,
+            Self::Piece => 7,
+            Self::Cancel => 8,
+            Self::Extension => 20,
         }
     }
-    pub fn tag_to_type(tag:&u8) -> Option<MessageTag>{
-        match tag  {
+    pub fn tag_to_type(tag: &u8) -> Option<MessageTag> {
+        match tag {
             0 => Some(MessageTag::Choke),
             1 => Some(MessageTag::Unchoke),
             2 => Some(MessageTag::Interested),
@@ -42,43 +45,149 @@ impl MessageTag {
             6 => Some(MessageTag::Request),
             7 => Some(MessageTag::Piece),
             8 => Some(MessageTag::Cancel),
-            _ => None
+            20 => Some(MessageTag::Extension),
+            _ => None,
         }
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct Message{
+pub struct Message {
     pub message_tag: MessageTag,
-    pub payload: Payload
+    pub payload: Payload,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Payload{
+pub enum Payload {
     SimplePayload(Vec<u8>),
     //// Used for extension messages
-    ExtendedPayload(ExtensionPayload)
+    ExtendedPayload(ExtensionPayload),
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct ExtensionPayload{
+pub struct ExtensionPayload {
     pub extension_id: u8,
-    pub dict: serde_json::Map<String, Value>
+    pub dict: serde_json::Value,
 }
 
+impl ExtensionPayload {
+    pub fn to_vector(&self) -> Vec<u8> {
+        let mut single_slice = Vec::new();
+        single_slice.extend(&self.extension_id.to_be_bytes());
+        let str_reference = self
+            .dict
+            .as_str()
+            .expect("Conversion from Value to String failed");
+        single_slice.extend(str_reference.as_bytes());
+        single_slice
+    }
+
+    pub fn from_utf8(v: &[u8]) -> Self {
+        let extension_message_id: u8 = u8::from_be(v[0]);
+        assert_eq!(extension_message_id, 1, "Extension Message id has to be 1");
+        let benconded_dictionary =
+            String::from_utf8(v[1..].into()).expect("Parsing utf8 to string");
+        // let benconded_dictionary = utils::decode_bencoded_value(&benconded_dictionary).0;
+        ExtensionPayload {
+            extension_id: extension_message_id,
+            dict: benconded_dictionary.into(),
+        }
+    }
+}
+
+// mod extesionpayload {
+//     use serde::de::Deserialize;
+//     use serde::ser::{Serialize, Serializer};
+//
+//     use crate::utils;
+//     #[derive(Debug, PartialEq, Eq)]
+//     pub struct ExtensionPayload {
+//         pub extension_id: u8,
+//         pub dict: serde_json::Value,
+//     }
+//     struct IExtensionPayload;
+//
+//     impl<'de> serde::de::Visitor<'de> for IExtensionPayload {
+//         type Value = ExtensionPayload;
+//
+//         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+//             write!(formatter, "A byte representation of the Extension Payload")
+//         }
+//
+//         fn visit_bytes<E>(self, v: &[u8]) -> std::result::Result<Self::Value, E>
+//         where
+//             E: serde::de::Error,
+//         {
+//             let extension_message_id: u8 = u8::from_be(v[0]);
+//             assert_eq!(extension_message_id, 20, "Extension Message id has to be 1");
+//             let benconded_dictionary =
+//                 String::from_utf8(v[1..].into()).expect("Parsing utf8 to string");
+//             let benconded_dictionary = utils::decode_bencoded_value(&benconded_dictionary).0;
+//             Ok(ExtensionPayload {
+//                 extension_id: extension_message_id,
+//                 dict: benconded_dictionary,
+//             })
+//         }
+//     }
+//
+//     impl<'de> Deserialize<'de> for ExtensionPayload {
+//         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+//         where
+//             D: serde::Deserializer<'de>,
+//         {
+//             deserializer.deserialize_bytes(IExtensionPayload)
+//         }
+//     }
+//
+//     impl Serialize for ExtensionPayload {
+//         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//         where
+//             S: Serializer,
+//         {
+//             let mut single_slice = Vec::new();
+//             single_slice.extend(&self.extension_id.to_be_bytes());
+//             let str_reference = self
+//                 .dict
+//                 .as_str()
+//                 .expect("Conversion from Value to String failed");
+//             single_slice.extend(str_reference.as_bytes());
+//             serializer.serialize_bytes(&single_slice)
+//         }
+//     }
+// }
+
+#[cfg(test)]
+mod extension_payload_test {
+    use crate::{message::ExtensionPayload, utils};
+
+    #[test]
+    fn test_serialize_and_deserialized() {
+        let bencoded_dict = "d1:md11:ut_metadatai13eee";
+        // eprintln!("{:?}", bencoded_dict);
+        let my_struct = ExtensionPayload {
+            extension_id: 1,
+            dict: bencoded_dict.into(),
+        };
+        let seriazlied_struct = my_struct.to_vector();
+        let deserialized_struct = ExtensionPayload::from_utf8(&seriazlied_struct);
+        println!("{:?}", deserialized_struct);
+        assert_eq!(
+            my_struct.extension_id, deserialized_struct.extension_id,
+            "Should be equal"
+        );
+        assert_eq!(my_struct.dict, deserialized_struct.dict, "Should be equal");
+    }
+}
 
 pub struct MessageFramer;
 const MAX: usize = 2 * 16 * 1024; // 2^15
 
-/// The 1st 4 bytes gives playload length + message_type 
+/// The 1st 4 bytes gives playload length + message_type
 impl Decoder for MessageFramer {
     type Item = Message;
     type Error = std::io::Error;
 
-    fn decode(
-        &mut self,
-        src: &mut BytesMut
-    ) -> Result<Option<Self::Item>, Self::Error> {
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         // println!("DEcode lenght {}", src.len());
         if src.len() < 5 {
             // Not enough data to read length and tag marker.
@@ -96,7 +205,7 @@ impl Decoder for MessageFramer {
         if length > MAX {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Frame of length {} is too large.", length)
+                format!("Frame of length {} is too large.", length),
             ));
         }
 
@@ -121,14 +230,14 @@ impl Decoder for MessageFramer {
         // Convert the data to the appropriate Message
         let message_tag = MessageTag::tag_to_type(&src[4]).expect("Invalid msg type");
         src.advance(4 + length);
-
-        Ok(Some(
-            Message{
-                message_tag: message_tag,
-                payload: Payload::SimplePayload(data)
-            }
-            )
-        )
+        let mut payload = Payload::SimplePayload(data.clone());
+        if message_tag == MessageTag::Extension {
+            payload = Payload::ExtendedPayload(ExtensionPayload::from_utf8(&data));
+        }
+        Ok(Some(Message {
+            message_tag,
+            payload,
+        }))
     }
 }
 
@@ -139,14 +248,16 @@ impl Encoder<Message> for MessageFramer {
         // Don't send the message if it is longer than the other end will
         // accept.
         let payload = match &message.payload {
-                Payload::SimplePayload(vector) => vector,
-                _ => &Vec::<u8>::new()
-            };
-        let payload_length = *&payload.len();
+            Payload::SimplePayload(vector) => vector,
+            Payload::ExtendedPayload(extension_payload_struct) => {
+                &extension_payload_struct.to_vector()
+            }
+        };
+        let payload_length = payload.len();
         if payload_length + 1 > MAX {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Payload of length {} is too large.", payload_length)
+                format!("Payload of length {} is too large.", payload_length),
             ));
         }
 
@@ -160,7 +271,7 @@ impl Encoder<Message> for MessageFramer {
         // Write the length and string to the buffer.
         dst.extend_from_slice(&len_slice);
         dst.extend_from_slice(&[MessageTag::type_to_tag(&message.message_tag)]);
-        dst.extend_from_slice(&payload);
+        dst.extend_from_slice(payload);
         Ok(())
     }
 }
@@ -245,45 +356,45 @@ mod tests {
     }
 }
 
-pub struct RequestPayload{
+pub struct RequestPayload {
     /// the zero-based piece index
     pub index: u32,
     ///  the zero-based byte offset within the piece
     /// This'll be 0 for the first block, 2^14 for the second block, 2*2^14 for the third block etc.
-    pub begin: u32, 
+    pub begin: u32,
     /// the length of the block in bytes
     /// This'll be 2^14 (16 * 1024) for all blocks except the last one.
-    pub length: u32, 
+    pub length: u32,
 }
 
-impl RequestPayload{
+impl RequestPayload {
     pub fn to_vec(&self) -> Vec<u8> {
         // let mut vector: Vec<u8> = Vec::new();
         let mut buf: [u8; 12] = [0u8; 12];
         buf[0..4].copy_from_slice(&self.index.to_be_bytes());
         buf[4..8].copy_from_slice(&self.begin.to_be_bytes());
         buf[8..12].copy_from_slice(&self.length.to_be_bytes());
-        return buf.into()
+        return buf.into();
     }
 }
-pub struct ReceivePayload{
+pub struct ReceivePayload {
     /// the zero-based piece index
     pub index: u32,
     ///  the zero-based byte offset within the piece
     /// This'll be 0 for the first block, 2^14 for the second block, 2*2^14 for the third block etc.
-    pub begin: u32, 
+    pub begin: u32,
     /// the data for the piece, usually 2^14 bytes long
-    pub block: Vec<u8>, 
+    pub block: Vec<u8>,
 }
 
 impl ReceivePayload {
-    pub fn new(payload:&mut Vec<u8>) -> Self{
+    pub fn new(payload: &mut Vec<u8>) -> Self {
         let index = u32::from_be_bytes(payload[0..4].try_into().expect("slice length not 4"));
         let begin = u32::from_be_bytes(payload[4..8].try_into().expect("slice length not 4"));
-        Self { 
-            index: index, 
-            begin: begin, 
-            block: payload.split_off(8) 
+        Self {
+            index: index,
+            begin: begin,
+            block: payload.split_off(8),
         }
     }
 }
