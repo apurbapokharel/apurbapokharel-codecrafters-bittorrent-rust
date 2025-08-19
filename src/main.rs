@@ -209,6 +209,12 @@ async fn main() -> anyhow::Result<()> {
                 };
                 let _ = tcp_stream.send(extension_handshake).await;
                 //receive extension handshake
+                let extension_reply = tcp_stream
+                    .next()
+                    .await
+                    .expect("Expecting extension handshake reply")
+                    .context("Failed to get reply message")?;
+                println!("{:?}", extension_reply);
             } else {
                 println!("Extension not supported {:?}", peer_reserved_bit);
             }
