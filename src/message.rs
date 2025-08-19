@@ -1,9 +1,8 @@
 use bytes::{Buf, BytesMut};
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use tokio_util::codec::{Decoder, Encoder};
-
-use crate::utils;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum MessageTag {
@@ -64,120 +63,113 @@ pub enum Payload {
     ExtendedPayload(ExtensionPayload),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExtensionPayload {
     pub extension_id: u8,
-    pub dict: serde_json::Value,
+    /// Dictionary of supported extension messages which maps names of extensions to an extended message ID for each extension message.
+    pub m: M,
+
+    /// Local TCP listen port
+    #[serde(default)]
+    pub p: u8,
+
+    /// Client name and version (as utf8)
+    #[serde(default)]
+    pub v: String,
+
+    /// ip address of this peer (maybe IPV4 or IPV6)
+    #[serde(default = "default_peer")]
+    pub yourip: PeerIP,
+
+    /// If this peer has an IPv6 interface, this is the compact representation of that address (16 bytes)
+    #[serde(default = "ipv6_default")]
+    pub ipv6: Ipv6Addr,
+
+    /// If extend_from_slices peer has an IPv4 interface, this is the compact representation of that address (4 bytes).
+    #[serde(default = "ipv4_default")]
+    pub ipv4: Ipv4Addr,
+
+    /// An integer, the number of outstanding request messages this client supports without dropping any. The default in in libtorrent is 250.
+    #[serde(default)]
+    pub reqq: u8,
 }
 
-impl ExtensionPayload {
-    pub fn to_vector(&self) -> Vec<u8> {
-        let mut single_slice = Vec::new();
-        single_slice.extend(&self.extension_id.to_be_bytes());
-        let str_reference = self
-            .dict
-            .as_str()
-            .expect("Conversion from Value to String failed");
-        single_slice.extend(str_reference.as_bytes());
-        single_slice
-    }
-
-    pub fn from_utf8(v: &[u8]) -> Self {
-        let extension_message_id: u8 = u8::from_be(v[0]);
-        assert_eq!(extension_message_id, 0, "Extension Message id has to be 1");
-        let benconded_dictionary =
-            String::from_utf8(v[1..].into()).expect("Parsing utf8 to string");
-        // let benconded_dictionary = utils::decode_bencoded_value(&benconded_dictionary).0;
-        ExtensionPayload {
-            extension_id: extension_message_id,
-            dict: benconded_dictionary.into(),
-        }
-    }
+pub fn ipv6_default() -> Ipv6Addr {
+    Ipv6Addr::UNSPECIFIED
 }
 
-// mod extesionpayload {
-//     use serde::de::Deserialize;
-//     use serde::ser::{Serialize, Serializer};
-//
-//     use crate::utils;
-//     #[derive(Debug, PartialEq, Eq)]
-//     pub struct ExtensionPayload {
-//         pub extension_id: u8,
-//         pub dict: serde_json::Value,
-//     }
-//     struct IExtensionPayload;
-//
-//     impl<'de> serde::de::Visitor<'de> for IExtensionPayload {
-//         type Value = ExtensionPayload;
-//
-//         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-//             write!(formatter, "A byte representation of the Extension Payload")
-//         }
-//
-//         fn visit_bytes<E>(self, v: &[u8]) -> std::result::Result<Self::Value, E>
-//         where
-//             E: serde::de::Error,
-//         {
-//             let extension_message_id: u8 = u8::from_be(v[0]);
-//             assert_eq!(extension_message_id, 20, "Extension Message id has to be 1");
-//             let benconded_dictionary =
-//                 String::from_utf8(v[1..].into()).expect("Parsing utf8 to string");
-//             let benconded_dictionary = utils::decode_bencoded_value(&benconded_dictionary).0;
-//             Ok(ExtensionPayload {
-//                 extension_id: extension_message_id,
-//                 dict: benconded_dictionary,
-//             })
-//         }
-//     }
-//
-//     impl<'de> Deserialize<'de> for ExtensionPayload {
-//         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-//         where
-//             D: serde::Deserializer<'de>,
-//         {
-//             deserializer.deserialize_bytes(IExtensionPayload)
-//         }
+pub fn ipv4_default() -> Ipv4Addr {
+    Ipv4Addr::UNSPECIFIED
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct M {
+    #[serde(default)]
+    pub ut_metadata: u8,
+    #[serde(default)]
+    pub ut_pex: u8,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PeerIP {
+    Ipv4(Ipv4Addr),
+    Ipv6(Ipv6Addr),
+}
+
+pub fn default_peer() -> PeerIP {
+    PeerIP::Ipv4(ipv4_default())
+}
+
+// impl ExtensionPayload {
+//     pub fn to_vector(&self) -> Vec<u8> {
+//         let mut single_slice = Vec::new();
+//         single_slice.extend(&self.extension_id.to_be_bytes());
+//         let str_reference = self
+//             .dict
+//             .as_str()
+//             .expect("Conversion from Value to String failed");
+//         single_slice.extend(str_reference.as_bytes());
+//         single_slice
 //     }
 //
-//     impl Serialize for ExtensionPayload {
-//         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//         where
-//             S: Serializer,
-//         {
-//             let mut single_slice = Vec::new();
-//             single_slice.extend(&self.extension_id.to_be_bytes());
-//             let str_reference = self
-//                 .dict
-//                 .as_str()
-//                 .expect("Conversion from Value to String failed");
-//             single_slice.extend(str_reference.as_bytes());
-//             serializer.serialize_bytes(&single_slice)
+//     pub fn from_utf8(v: &[u8]) -> Self {
+//         let extension_message_id: u8 = u8::from_be(v[0]);
+//         assert_eq!(extension_message_id, 0, "Extension Message id has to be 0");
+//         let bencoded_dictionary: String;
+//         unsafe {
+//             bencoded_dictionary = String::from_utf8_unchecked(v[1..].into());
+//             // .expect(&format!("Parsing utf8 to string failed: {:?}", &v[93]));
+//         }
+//
+//         ExtensionPayload {
+//             extension_id: extension_message_id,
+//             dict: bencoded_dictionary.into(),
 //         }
 //     }
 // }
-
-#[cfg(test)]
-mod extension_payload_test {
-    use crate::{message::ExtensionPayload, utils};
-
-    #[test]
-    fn test_serialize_and_deserialized() {
-        let bencoded_dict = "d1:md11:ut_metadatai13eee";
-        // eprintln!("{:?}", bencoded_dict);
-        let my_struct = ExtensionPayload {
-            extension_id: 0,
-            dict: bencoded_dict.into(),
-        };
-        let seriazlied_struct = my_struct.to_vector();
-        let deserialized_struct = ExtensionPayload::from_utf8(&seriazlied_struct);
-        println!("{:?}", deserialized_struct);
-        assert_eq!(
-            my_struct.extension_id, deserialized_struct.extension_id,
-            "Should be equal"
-        );
-        assert_eq!(my_struct.dict, deserialized_struct.dict, "Should be equal");
-    }
-}
+//
+// #[cfg(test)]
+// mod extension_payload_test {
+//     use crate::message::ExtensionPayload;
+//
+//     #[test]
+//     fn test_serialize_and_deserialized() {
+//         let bencoded_dict = "d1:md11:ut_metadatai13eee";
+//         // eprintln!("{:?}", bencoded_dict);
+//         let my_struct = ExtensionPayload {
+//             extension_id: 0,
+//             dict: bencoded_dict.into(),
+//         };
+//         let seriazlied_struct = my_struct.to_vector();
+//         let deserialized_struct = ExtensionPayload::from_utf8(&seriazlied_struct);
+//         println!("{:?}", deserialized_struct);
+//         assert_eq!(
+//             my_struct.extension_id, deserialized_struct.extension_id,
+//             "Should be equal"
+//         );
+//         assert_eq!(my_struct.dict, deserialized_struct.dict, "Should be equal");
+//     }
+// }
 
 pub struct MessageFramer;
 const MAX: usize = 2 * 16 * 1024; // 2^15
@@ -232,7 +224,9 @@ impl Decoder for MessageFramer {
         src.advance(4 + length);
         let mut payload = Payload::SimplePayload(data.clone());
         if message_tag == MessageTag::Extension {
-            payload = Payload::ExtendedPayload(ExtensionPayload::from_utf8(&data));
+            let extension_payload: ExtensionPayload =
+                serde_bencode::from_bytes(&data).expect("Serde bencode failed");
+            payload = Payload::ExtendedPayload(extension_payload);
         }
         Ok(Some(Message {
             message_tag,
