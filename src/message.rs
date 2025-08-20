@@ -105,30 +105,6 @@ pub struct ExtensionPayload {
     pub reqq: u8,
 }
 
-// pub struct ExtensionPayload {
-//     #[serde(default)]
-//     pub extension_id: u8,
-//     /// Dictionary of supported extension messages which maps names of extensions to an extended message ID for each extension message.
-//     pub m: M,
-//     #[serde(default)]
-//     pub metadata_size: u8
-// }
-
-// #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-// pub struct ExtensionPayload {
-//     pub extension_id: u8,
-//     pub m: M,
-//     #[serde(default)]
-//     #[serde(skip_serializing_if = "String::is_empty")]
-//     pub string: String,
-//     // #[serde(default = "ipv6_default")]
-//     // pub ipv6: Ipv6Addr,  
-//     // #[serde(default = "default_peer")]
-//     // pub yourip: PeerIP,
-//     // #[serde(default = "ipv4_default")]
-//     // pub ipv4: Ipv4Addr,
-// }
-
 fn is_zero(x: &u8) -> bool {
     *x == 0
 }

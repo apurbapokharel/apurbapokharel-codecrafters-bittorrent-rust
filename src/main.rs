@@ -192,6 +192,7 @@ async fn main() -> anyhow::Result<()> {
             if peer_reserved_bit[2].eq(&reserved[2]) {
                 let content = fs::read("magnet.file").context("Read file")?;
                 let extension_payload: ExtensionPayload = serde_bencode::from_bytes(&content).context("Convert file to a struct")?;
+                println!("Sending handshake{:?}", extension_payload);
                 let extension_handshake = Message {
                     message_tag: MessageTag::Extension,
                     payload: Payload::ExtendedPayload(extension_payload),
@@ -205,8 +206,9 @@ async fn main() -> anyhow::Result<()> {
                     .expect("Expecting extension handshake reply")
                     .context("Failed to get reply message")?;
 
+                // println!("{:?}", extension_reply);
                 if let Payload::ExtendedPayload(payload) = extension_reply.payload{
-                    println!("Peer Metadata Extension ID: {:?}", payload.extension_id);
+                    println!("Peer Metadata Extension ID: {:?}", payload.m.ut_metadata);
                 }
             } else {
                 println!("Extension not supported {:?}", peer_reserved_bit);
