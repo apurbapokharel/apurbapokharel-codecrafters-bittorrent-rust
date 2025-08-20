@@ -65,33 +65,87 @@ pub enum Payload {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ExtensionPayload {
+    #[serde(default)]
     pub extension_id: u8,
     /// Dictionary of supported extension messages which maps names of extensions to an extended message ID for each extension message.
     pub m: M,
 
     /// Local TCP listen port
     #[serde(default)]
+    #[serde(skip_serializing_if = "is_zero")]
     pub p: u8,
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "is_zero")]
+    pub metadata_size: u8,
 
     /// Client name and version (as utf8)
     #[serde(default)]
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub v: String,
 
-    /// ip address of this peer (maybe IPV4 or IPV6)
+    /// ip address of the sending peer (maybe IPV4 or IPV6)
     #[serde(default = "default_peer")]
+    #[serde(skip_serializing_if = "is_default")]
     pub yourip: PeerIP,
 
     /// If this peer has an IPv6 interface, this is the compact representation of that address (16 bytes)
     #[serde(default = "ipv6_default")]
+    #[serde(skip_serializing_if = "is_ipv6_default")]
     pub ipv6: Ipv6Addr,
 
     /// If extend_from_slices peer has an IPv4 interface, this is the compact representation of that address (4 bytes).
     #[serde(default = "ipv4_default")]
+    #[serde(skip_serializing_if = "is_ipv4_default")]
     pub ipv4: Ipv4Addr,
 
     /// An integer, the number of outstanding request messages this client supports without dropping any. The default in in libtorrent is 250.
     #[serde(default)]
+    #[serde(skip_serializing_if = "is_zero")]
     pub reqq: u8,
+}
+
+// pub struct ExtensionPayload {
+//     #[serde(default)]
+//     pub extension_id: u8,
+//     /// Dictionary of supported extension messages which maps names of extensions to an extended message ID for each extension message.
+//     pub m: M,
+//     #[serde(default)]
+//     pub metadata_size: u8
+// }
+
+// #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+// pub struct ExtensionPayload {
+//     pub extension_id: u8,
+//     pub m: M,
+//     #[serde(default)]
+//     #[serde(skip_serializing_if = "String::is_empty")]
+//     pub string: String,
+//     // #[serde(default = "ipv6_default")]
+//     // pub ipv6: Ipv6Addr,  
+//     // #[serde(default = "default_peer")]
+//     // pub yourip: PeerIP,
+//     // #[serde(default = "ipv4_default")]
+//     // pub ipv4: Ipv4Addr,
+// }
+
+fn is_zero(x: &u8) -> bool {
+    *x == 0
+}
+
+fn is_ipv4_default(ipv4: &Ipv4Addr) -> bool{
+    ipv4.eq(&Ipv4Addr::UNSPECIFIED)
+} 
+
+fn is_ipv6_default(ipv6: &Ipv6Addr) -> bool{
+    ipv6.eq(&Ipv6Addr::UNSPECIFIED)
+} 
+
+fn is_default(peer_ip: &PeerIP) -> bool {
+    match peer_ip {
+        PeerIP::Ipv4(ip)=> is_ipv4_default(ip),
+        PeerIP::Ipv6(ip)=> is_ipv6_default(ip)
+    }
 }
 
 pub fn ipv6_default() -> Ipv6Addr {
@@ -104,13 +158,14 @@ pub fn ipv4_default() -> Ipv4Addr {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct M {
-    #[serde(default)]
     pub ut_metadata: u8,
     #[serde(default)]
+    #[serde(skip_serializing_if = "is_zero")]
     pub ut_pex: u8,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum PeerIP {
     Ipv4(Ipv4Addr),
     Ipv6(Ipv6Addr),
@@ -120,56 +175,84 @@ pub fn default_peer() -> PeerIP {
     PeerIP::Ipv4(ipv4_default())
 }
 
-// impl ExtensionPayload {
-//     pub fn to_vector(&self) -> Vec<u8> {
-//         let mut single_slice = Vec::new();
-//         single_slice.extend(&self.extension_id.to_be_bytes());
-//         let str_reference = self
-//             .dict
-//             .as_str()
-//             .expect("Conversion from Value to String failed");
-//         single_slice.extend(str_reference.as_bytes());
-//         single_slice
-//     }
-//
-//     pub fn from_utf8(v: &[u8]) -> Self {
-//         let extension_message_id: u8 = u8::from_be(v[0]);
-//         assert_eq!(extension_message_id, 0, "Extension Message id has to be 0");
-//         let bencoded_dictionary: String;
-//         unsafe {
-//             bencoded_dictionary = String::from_utf8_unchecked(v[1..].into());
-//             // .expect(&format!("Parsing utf8 to string failed: {:?}", &v[93]));
-//         }
-//
-//         ExtensionPayload {
-//             extension_id: extension_message_id,
-//             dict: bencoded_dictionary.into(),
-//         }
-//     }
-// }
-//
-// #[cfg(test)]
-// mod extension_payload_test {
-//     use crate::message::ExtensionPayload;
-//
-//     #[test]
-//     fn test_serialize_and_deserialized() {
-//         let bencoded_dict = "d1:md11:ut_metadatai13eee";
-//         // eprintln!("{:?}", bencoded_dict);
-//         let my_struct = ExtensionPayload {
-//             extension_id: 0,
-//             dict: bencoded_dict.into(),
-//         };
-//         let seriazlied_struct = my_struct.to_vector();
-//         let deserialized_struct = ExtensionPayload::from_utf8(&seriazlied_struct);
-//         println!("{:?}", deserialized_struct);
-//         assert_eq!(
-//             my_struct.extension_id, deserialized_struct.extension_id,
-//             "Should be equal"
-//         );
-//         assert_eq!(my_struct.dict, deserialized_struct.dict, "Should be equal");
-//     }
-// }
+
+mod peerip{
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    use serde::de::{ Deserialize};
+    use serde::ser::{Serialize, Serializer};
+    use crate::message::PeerIP;
+
+    struct IPeerIp;
+
+    impl<'de> serde::de::Visitor<'de> for IPeerIp {
+        type Value = PeerIP;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(formatter, "a byte string whose length is a multiple of 20")
+        }
+
+        fn visit_bytes<E>(self, v: &[u8]) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error, {
+                    if ! (v.len() == 4 as usize || v.len() == 16 as usize) {
+                        return Err(E::custom(format!("Expecting length of 4 or 6")))
+                    }
+
+                    let peer = 
+                        if v.len() == 4{
+                            PeerIP::Ipv4(Ipv4Addr::new(v[0],v[1],v[2],v[3]))
+                        } else {
+                            let u16_vector: Vec<u16> = 
+                                v.chunks_exact(2)
+                                    .map(|chunk|{
+                                       u16::from_be_bytes([chunk[0], chunk[1]])
+                                    }).collect();
+                            PeerIP::Ipv6(Ipv6Addr::new(
+                                    u16_vector[0],
+                                    u16_vector[1],
+                                    u16_vector[2],
+                                    u16_vector[3],
+                                    u16_vector[4],
+                                    u16_vector[5],
+                                    u16_vector[6],
+                                    u16_vector[7])
+                                )
+                        };
+                    Ok(peer)
+        }
+    }
+
+
+    impl<'de> Deserialize<'de> for PeerIP {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            deserializer.deserialize_bytes(IPeerIp)
+        }
+    }
+
+    impl Serialize for PeerIP {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            match self {
+                PeerIP::Ipv4(v4) => {
+                    let a : Vec<u8> = v4.octets().to_vec();
+                    serializer.serialize_bytes(&a)
+                },
+                PeerIP::Ipv6(v6) => {
+                    let a : Vec<u8> = v6.octets().to_vec();
+                    serializer.serialize_bytes(&a)
+                }
+            }
+        }
+    }
+
+}
+// d1:md11:ut_metadatai1e6:ut_pexi2ee13:metadata_sizei132e4:reqqi250e1:v10:Rain 0.0.06:yourip4:/.e
 
 pub struct MessageFramer;
 const MAX: usize = 2 * 16 * 1024; // 2^15
@@ -224,8 +307,12 @@ impl Decoder for MessageFramer {
         src.advance(4 + length);
         let mut payload = Payload::SimplePayload(data.clone());
         if message_tag == MessageTag::Extension {
+            // println!("BYTES {:?}", data);
+            // let data: &[u8] = &[100, 49, 58, 109, 100, 49, 49, 58, 117, 116, 95, 109, 101, 116, 97, 100, 97, 116, 97, 105, 49, 101, 54, 58, 117, 116, 95, 112, 101, 120, 105, 50, 101, 101, 49, 51, 58, 109, 101, 116, 97, 100, 97, 116, 97, 95, 115, 105, 122, 101, 105, 49, 51, 50, 101, 101];
+            // let data: &[u8] = &[100, 49, 58, 109, 100, 49, 49, 58, 117, 116, 95, 109, 101, 116, 97, 100, 97, 116, 97, 105, 49, 101, 54, 58, 117, 116, 95, 112, 101, 120, 105, 50, 101, 101, 49, 51, 58, 109, 101, 116, 97, 100, 97, 116, 97, 95, 115, 105, 122, 101, 105, 49, 51, 50, 101, 52, 58, 114, 101, 113, 113, 105, 50, 53, 48, 101, 49, 58, 118, 49, 48, 58, 82, 97, 105, 110, 32, 48, 46, 48, 46, 48, 54, 58, 121, 111, 117, 114, 105, 112, 52, 58, 47, 4, 16, 46, 101];
+            assert_eq!(*&data[0],0 as u8,"extension id should be 0");
             let extension_payload: ExtensionPayload =
-                serde_bencode::from_bytes(&data).expect("Serde bencode failed");
+                serde_bencode::from_bytes(&data[1..]).expect("Serde bencode failed");
             payload = Payload::ExtendedPayload(extension_payload);
         }
         Ok(Some(Message {
@@ -244,7 +331,7 @@ impl Encoder<Message> for MessageFramer {
         let payload = match &message.payload {
             Payload::SimplePayload(vector) => vector,
             Payload::ExtendedPayload(extension_payload_struct) => {
-                &extension_payload_struct.to_vector()
+                &serde_bencode::to_bytes(&extension_payload_struct).expect("Serialization failed")
             }
         };
         let payload_length = payload.len();

@@ -50,6 +50,6 @@ impl Magnet{
             });
 
         a.try_into().expect("Conversion to [u8; 20] failed")
-}
+    }
 
 }

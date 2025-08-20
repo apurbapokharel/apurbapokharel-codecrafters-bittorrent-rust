@@ -1,7 +1,7 @@
 use codecrafters_bittorrent::{
     handshake::Handshake,
     magnet::Magnet,
-    message::{ExtensionPayload, Message, MessageFramer, MessageTag, Payload},
+    message::{ExtensionPayload, Message, MessageFramer, MessageTag, Payload, M},
     torrent::Torrent,
     utils::{
         decode_bencoded_value, establish_handshake, establish_handshake_and_download,
@@ -15,11 +15,10 @@ use tokio::{
     net::TcpStream,
 };
 use tokio_util::codec::Framed;
-
+use std::{fs, net::SocketAddrV4};
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use hex;
-use std::net::SocketAddrV4;
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
@@ -179,42 +178,36 @@ async fn main() -> anyhow::Result<()> {
             // println!("Peer Info Hash: {:?}", info_hash_received);
             // println!("Peer Reserved Bit: {:?}", peer_reserved_bit);
 
-            //send bitfield
             // no need to do for this challenge
             let codec = MessageFramer;
             let mut tcp_stream = Framed::new(tcp_stream, codec);
-            // let bitfield_message = Message {
-            //     message_tag: MessageTag::Bitfield,
-            //     payload: Payload::SimplePayload(Vec::new()),
-            // };
-            // let _ = tcp_stream.send(bitfield_message).await;
-
+    
             //get bitfield
-            let response = tcp_stream
+            let _response = tcp_stream
                 .next()
                 .await
                 .expect("Expecting a bitfield message")
                 .context("Failed to get bitfield")?;
             // assert!(!response.payload.is_empty());
             if peer_reserved_bit[2].eq(&reserved[2]) {
-                //send extension handshake
-                let extension_handshake_dict = "d1:md11:ut_metadatai13eee";
-                let extension_payload = ExtensionPayload {
-                    extension_id: 0,
-                    dict: extension_handshake_dict.into(),
-                };
+                let content = fs::read("magnet.file").context("Read file")?;
+                let extension_payload: ExtensionPayload = serde_bencode::from_bytes(&content).context("Convert file to a struct")?;
                 let extension_handshake = Message {
                     message_tag: MessageTag::Extension,
                     payload: Payload::ExtendedPayload(extension_payload),
                 };
                 let _ = tcp_stream.send(extension_handshake).await;
+
                 //receive extension handshake
                 let extension_reply = tcp_stream
                     .next()
                     .await
                     .expect("Expecting extension handshake reply")
                     .context("Failed to get reply message")?;
-                println!("{:?}", extension_reply);
+
+                if let Payload::ExtendedPayload(payload) = extension_reply.payload{
+                    println!("Peer Metadata Extension ID: {:?}", payload.extension_id);
+                }
             } else {
                 println!("Extension not supported {:?}", peer_reserved_bit);
             }
