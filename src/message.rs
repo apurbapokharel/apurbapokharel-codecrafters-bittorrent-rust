@@ -64,9 +64,23 @@ pub enum Payload {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ExtensionPayload {
+pub struct ExtensionPayload{
     #[serde(default)]
     pub extension_id: u8,
+    pub payload: ExtensionPayloadPayload
+}
+
+impl ExtensionPayload{
+    fn to_vec(&self) -> Vec<u8>{
+        let mut payload_vec = serde_bencode::to_bytes(&self.payload).expect("Serialization failed");
+        let mut a: Vec<u8> = Vec::new();
+        a.push(0);
+        a.append(&mut payload_vec);
+        return a
+    }
+}
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ExtensionPayloadPayload {
     /// Dictionary of supported extension messages which maps names of extensions to an extended message ID for each extension message.
     pub m: M,
 
@@ -140,7 +154,6 @@ pub struct M {
     pub ut_pex: u8,
 }
 
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum PeerIP {
     Ipv4(Ipv4Addr),
@@ -150,7 +163,6 @@ pub enum PeerIP {
 pub fn default_peer() -> PeerIP {
     PeerIP::Ipv4(ipv4_default())
 }
-
 
 mod peerip{
     use std::net::{Ipv4Addr, Ipv6Addr};
@@ -283,13 +295,13 @@ impl Decoder for MessageFramer {
         src.advance(4 + length);
         let mut payload = Payload::SimplePayload(data.clone());
         if message_tag == MessageTag::Extension {
-            // println!("BYTES {:?}", data);
-            // let data: &[u8] = &[100, 49, 58, 109, 100, 49, 49, 58, 117, 116, 95, 109, 101, 116, 97, 100, 97, 116, 97, 105, 49, 101, 54, 58, 117, 116, 95, 112, 101, 120, 105, 50, 101, 101, 49, 51, 58, 109, 101, 116, 97, 100, 97, 116, 97, 95, 115, 105, 122, 101, 105, 49, 51, 50, 101, 101];
-            // let data: &[u8] = &[100, 49, 58, 109, 100, 49, 49, 58, 117, 116, 95, 109, 101, 116, 97, 100, 97, 116, 97, 105, 49, 101, 54, 58, 117, 116, 95, 112, 101, 120, 105, 50, 101, 101, 49, 51, 58, 109, 101, 116, 97, 100, 97, 116, 97, 95, 115, 105, 122, 101, 105, 49, 51, 50, 101, 52, 58, 114, 101, 113, 113, 105, 50, 53, 48, 101, 49, 58, 118, 49, 48, 58, 82, 97, 105, 110, 32, 48, 46, 48, 46, 48, 54, 58, 121, 111, 117, 114, 105, 112, 52, 58, 47, 4, 16, 46, 101];
             assert_eq!(*&data[0],0 as u8,"extension id should be 0");
-            let extension_payload: ExtensionPayload =
+            let extension_payload: ExtensionPayloadPayload =
                 serde_bencode::from_bytes(&data[1..]).expect("Serde bencode failed");
-            payload = Payload::ExtendedPayload(extension_payload);
+            payload = Payload::ExtendedPayload(ExtensionPayload { 
+                extension_id: 0, 
+                payload: extension_payload 
+            });
         }
         Ok(Some(Message {
             message_tag,
@@ -307,7 +319,8 @@ impl Encoder<Message> for MessageFramer {
         let payload = match &message.payload {
             Payload::SimplePayload(vector) => vector,
             Payload::ExtendedPayload(extension_payload_struct) => {
-                &serde_bencode::to_bytes(&extension_payload_struct).expect("Serialization failed")
+                &extension_payload_struct.to_vec()
+                // &serde_bencode::to_bytes(&extension_payload_struct).expect("Serialization failed")
             }
         };
         let payload_length = payload.len();
@@ -337,7 +350,9 @@ impl Encoder<Message> for MessageFramer {
 mod tests {
     use super::*;
     use bytes::BytesMut;
+    use clap::builder::Str;
     use tokio_util::codec::Decoder;
+    use std::fs;
 
     #[test]
     fn test_my_message_decoder() {
@@ -410,6 +425,57 @@ mod tests {
         let result = decoder.decode(&mut buf).expect("Decoding failed");
 
         assert_eq!(result, None::<Message>)
+    }
+
+    #[test]
+    fn test_my_message_decoder_4() {
+        /// test to see if the 1st bit of the encoded codec is 0 
+        
+        let content = fs::read("magnet.file").expect("Read file");
+        let extension_payload: ExtensionPayloadPayload = serde_bencode::from_bytes(&content).expect("Convert file to a struct");
+        let payload = serde_bencode::to_bytes(&extension_payload).unwrap();
+        
+        let extension_payload_payload = ExtensionPayload { 
+                extension_id: 0, 
+                payload: extension_payload 
+        };
+        
+        println!("Sending extension payload bytes{:?}", extension_payload_payload.to_vec());
+
+        let extension_handshake = Message {
+            message_tag: MessageTag::Extension,
+            payload: Payload::ExtendedPayload(extension_payload_payload),
+        };
+        println!("Sending handshake{:?}", extension_handshake);
+        // println!("Sending payload bytes{:?}", payload);
+
+        let s = String::from_utf8(payload).expect("UTF8 conversion failed");
+        println!("Conversion string is {}", s);
+        // let length = payload.len() as u32 + 1;
+
+        // let mut buf = BytesMut::new();
+
+        // // Write length (4 bytes, BE)
+        // buf.extend_from_slice(&length.to_be_bytes());
+
+        // // Write message tag byte (e.g., 5 for Bitfield)
+        // buf.extend_from_slice(&[5]);
+
+        // // Write payload
+        // buf.extend_from_slice(&payload);
+
+        // // Run decoder
+        // let mut decoder = MessageFramer {};
+        // let result = decoder.decode(&mut buf).expect("Decoding failed");
+
+        // // Assert decoded message
+        // match result {
+        //     Some(msg) => {
+        //         assert_eq!(msg.message_tag, MessageTag::Bitfield);
+        //         assert_eq!(msg.payload, Payload::SimplePayload(payload));
+        //     }
+        //     None => panic!("Expected a decoded message, got None"),
+        // }
     }
 }
 

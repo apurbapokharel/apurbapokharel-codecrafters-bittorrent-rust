@@ -1,7 +1,7 @@
 use codecrafters_bittorrent::{
     handshake::Handshake,
     magnet::Magnet,
-    message::{ExtensionPayload, Message, MessageFramer, MessageTag, Payload, M},
+    message::{ExtensionPayload, ExtensionPayloadPayload, Message, MessageFramer, MessageTag, Payload, M},
     torrent::Torrent,
     utils::{
         decode_bencoded_value, establish_handshake, establish_handshake_and_download,
@@ -191,8 +191,13 @@ async fn main() -> anyhow::Result<()> {
             // assert!(!response.payload.is_empty());
             if peer_reserved_bit[2].eq(&reserved[2]) {
                 let content = fs::read("magnet.file").context("Read file")?;
-                let extension_payload: ExtensionPayload = serde_bencode::from_bytes(&content).context("Convert file to a struct")?;
-                println!("Sending handshake{:?}", extension_payload);
+                let extension_payload_payload: ExtensionPayloadPayload = serde_bencode::from_bytes(&content).context("Convert file to a struct")?;
+                // println!("Sending handshake{:?}", extension_payload_payload);
+
+                let extension_payload = ExtensionPayload { 
+                    extension_id: 0, 
+                    payload: extension_payload_payload 
+                };
                 let extension_handshake = Message {
                     message_tag: MessageTag::Extension,
                     payload: Payload::ExtendedPayload(extension_payload),
@@ -207,8 +212,8 @@ async fn main() -> anyhow::Result<()> {
                     .context("Failed to get reply message")?;
 
                 // println!("{:?}", extension_reply);
-                if let Payload::ExtendedPayload(payload) = extension_reply.payload{
-                    println!("Peer Metadata Extension ID: {:?}", payload.m.ut_metadata);
+                if let Payload::ExtendedPayload(extension_payload) = extension_reply.payload{
+                    println!("Peer Metadata Extension ID: {:?}", extension_payload.payload.m.ut_metadata);
                 }
             } else {
                 println!("Extension not supported {:?}", peer_reserved_bit);
