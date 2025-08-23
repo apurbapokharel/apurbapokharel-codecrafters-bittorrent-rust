@@ -1,8 +1,8 @@
 use crate::{
     handshake::Handshake,
     magnet::Magnet,
-    message::{Message, MessageFramer, MessageTag, Payload, ReceivePayload, RequestPayload},
-    request::{Request, Response},
+    message::{Message, MessageFramer, MessageTag, Payload, requestpayload::{ReceivePayload, RequestPayload}},
+    httprequest::{Request, Response},
     torrent::Torrent,
 };
 use anyhow::Context;
@@ -234,7 +234,7 @@ async fn fetch_a_piece(
             message_tag: MessageTag::Request,
             payload: Payload::SimplePayload(payload),
         };
-        let message_sent = tcp_stream.send(message_to_send).await;
+        let _message_sent = tcp_stream.send(message_to_send).await;
         // println!("Sent {:?}", message_sent);
         //TODO need a better check
         //assert_eq!(message_sent.unwrap(), ());

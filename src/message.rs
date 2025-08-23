@@ -1,8 +1,8 @@
 use bytes::{Buf, BytesMut};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::net::{Ipv4Addr, Ipv6Addr};
 use tokio_util::codec::{Decoder, Encoder};
+use crate::extension::{
+        extensionpayload::{ExtensionPayload, ExtensionType},
+        extensionhandshake::ExtensionHandshake};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum MessageTag {
@@ -63,185 +63,6 @@ pub enum Payload {
     ExtendedPayload(ExtensionPayload),
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ExtensionPayload{
-    #[serde(default)]
-    pub extension_id: u8,
-    pub payload: ExtensionPayloadPayload
-}
-
-impl ExtensionPayload{
-    fn to_vec(&self) -> Vec<u8>{
-        let mut payload_vec = serde_bencode::to_bytes(&self.payload).expect("Serialization failed");
-        let mut a: Vec<u8> = Vec::new();
-        a.push(0);
-        a.append(&mut payload_vec);
-        return a
-    }
-}
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ExtensionPayloadPayload {
-    /// Dictionary of supported extension messages which maps names of extensions to an extended message ID for each extension message.
-    pub m: M,
-
-    /// Local TCP listen port
-    #[serde(default)]
-    #[serde(skip_serializing_if = "is_zero")]
-    pub p: u8,
-
-    #[serde(default)]
-    #[serde(skip_serializing_if = "is_zero")]
-    pub metadata_size: u8,
-
-    /// Client name and version (as utf8)
-    #[serde(default)]
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub v: String,
-
-    /// ip address of the sending peer (maybe IPV4 or IPV6)
-    #[serde(default = "default_peer")]
-    #[serde(skip_serializing_if = "is_default")]
-    pub yourip: PeerIP,
-
-    /// If this peer has an IPv6 interface, this is the compact representation of that address (16 bytes)
-    #[serde(default = "ipv6_default")]
-    #[serde(skip_serializing_if = "is_ipv6_default")]
-    pub ipv6: Ipv6Addr,
-
-    /// If extend_from_slices peer has an IPv4 interface, this is the compact representation of that address (4 bytes).
-    #[serde(default = "ipv4_default")]
-    #[serde(skip_serializing_if = "is_ipv4_default")]
-    pub ipv4: Ipv4Addr,
-
-    /// An integer, the number of outstanding request messages this client supports without dropping any. The default in in libtorrent is 250.
-    #[serde(default)]
-    #[serde(skip_serializing_if = "is_zero")]
-    pub reqq: u8,
-}
-
-fn is_zero(x: &u8) -> bool {
-    *x == 0
-}
-
-fn is_ipv4_default(ipv4: &Ipv4Addr) -> bool{
-    ipv4.eq(&Ipv4Addr::UNSPECIFIED)
-} 
-
-fn is_ipv6_default(ipv6: &Ipv6Addr) -> bool{
-    ipv6.eq(&Ipv6Addr::UNSPECIFIED)
-} 
-
-fn is_default(peer_ip: &PeerIP) -> bool {
-    match peer_ip {
-        PeerIP::Ipv4(ip)=> is_ipv4_default(ip),
-        PeerIP::Ipv6(ip)=> is_ipv6_default(ip)
-    }
-}
-
-pub fn ipv6_default() -> Ipv6Addr {
-    Ipv6Addr::UNSPECIFIED
-}
-
-pub fn ipv4_default() -> Ipv4Addr {
-    Ipv4Addr::UNSPECIFIED
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct M {
-    pub ut_metadata: u8,
-    #[serde(default)]
-    #[serde(skip_serializing_if = "is_zero")]
-    pub ut_pex: u8,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum PeerIP {
-    Ipv4(Ipv4Addr),
-    Ipv6(Ipv6Addr),
-}
-
-pub fn default_peer() -> PeerIP {
-    PeerIP::Ipv4(ipv4_default())
-}
-
-mod peerip{
-    use std::net::{Ipv4Addr, Ipv6Addr};
-
-    use serde::de::{ Deserialize};
-    use serde::ser::{Serialize, Serializer};
-    use crate::message::PeerIP;
-
-    struct IPeerIp;
-
-    impl<'de> serde::de::Visitor<'de> for IPeerIp {
-        type Value = PeerIP;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            write!(formatter, "a byte string whose length is a multiple of 20")
-        }
-
-        fn visit_bytes<E>(self, v: &[u8]) -> std::result::Result<Self::Value, E>
-            where
-                E: serde::de::Error, {
-                    if ! (v.len() == 4 as usize || v.len() == 16 as usize) {
-                        return Err(E::custom(format!("Expecting length of 4 or 6")))
-                    }
-
-                    let peer = 
-                        if v.len() == 4{
-                            PeerIP::Ipv4(Ipv4Addr::new(v[0],v[1],v[2],v[3]))
-                        } else {
-                            let u16_vector: Vec<u16> = 
-                                v.chunks_exact(2)
-                                    .map(|chunk|{
-                                       u16::from_be_bytes([chunk[0], chunk[1]])
-                                    }).collect();
-                            PeerIP::Ipv6(Ipv6Addr::new(
-                                    u16_vector[0],
-                                    u16_vector[1],
-                                    u16_vector[2],
-                                    u16_vector[3],
-                                    u16_vector[4],
-                                    u16_vector[5],
-                                    u16_vector[6],
-                                    u16_vector[7])
-                                )
-                        };
-                    Ok(peer)
-        }
-    }
-
-
-    impl<'de> Deserialize<'de> for PeerIP {
-        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where
-            D: serde::Deserializer<'de>,
-        {
-            deserializer.deserialize_bytes(IPeerIp)
-        }
-    }
-
-    impl Serialize for PeerIP {
-        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: Serializer,
-        {
-            match self {
-                PeerIP::Ipv4(v4) => {
-                    let a : Vec<u8> = v4.octets().to_vec();
-                    serializer.serialize_bytes(&a)
-                },
-                PeerIP::Ipv6(v6) => {
-                    let a : Vec<u8> = v6.octets().to_vec();
-                    serializer.serialize_bytes(&a)
-                }
-            }
-        }
-    }
-
-}
-// d1:md11:ut_metadatai1e6:ut_pexi2ee13:metadata_sizei132e4:reqqi250e1:v10:Rain 0.0.06:yourip4:/.e
-
 pub struct MessageFramer;
 const MAX: usize = 2 * 16 * 1024; // 2^15
 
@@ -296,11 +117,11 @@ impl Decoder for MessageFramer {
         let mut payload = Payload::SimplePayload(data.clone());
         if message_tag == MessageTag::Extension {
             assert_eq!(*&data[0],0 as u8,"extension id should be 0");
-            let extension_payload: ExtensionPayloadPayload =
+            let extension_handshake: ExtensionHandshake =
                 serde_bencode::from_bytes(&data[1..]).expect("Serde bencode failed");
             payload = Payload::ExtendedPayload(ExtensionPayload { 
                 extension_id: 0, 
-                payload: extension_payload 
+                payload: ExtensionType::ExtensionHandshakeMessage(extension_handshake)  
             });
         }
         Ok(Some(Message {
@@ -346,11 +167,57 @@ impl Encoder<Message> for MessageFramer {
     }
 }
 
+pub mod requestpayload{
+    pub struct RequestPayload {
+        /// the zero-based piece index
+        pub index: u32,
+        ///  the zero-based byte offset within the piece
+        /// This'll be 0 for the first block, 2^14 for the second block, 2*2^14 for the third block etc.
+        pub begin: u32,
+        /// the length of the block in bytes
+        /// This'll be 2^14 (16 * 1024) for all blocks except the last one.
+        pub length: u32,
+    }
+    
+    impl RequestPayload {
+        pub fn to_vec(&self) -> Vec<u8> {
+            // let mut vector: Vec<u8> = Vec::new();
+            let mut buf: [u8; 12] = [0u8; 12];
+            buf[0..4].copy_from_slice(&self.index.to_be_bytes());
+            buf[4..8].copy_from_slice(&self.begin.to_be_bytes());
+            buf[8..12].copy_from_slice(&self.length.to_be_bytes());
+            return buf.into();
+        }
+    }
+    pub struct ReceivePayload {
+        /// the zero-based piece index
+        pub index: u32,
+        ///  the zero-based byte offset within the piece
+        /// This'll be 0 for the first block, 2^14 for the second block, 2*2^14 for the third block etc.
+        pub begin: u32,
+        /// the data for the piece, usually 2^14 bytes long
+        pub block: Vec<u8>,
+    }
+    
+    impl ReceivePayload {
+        pub fn new(payload: &mut Vec<u8>) -> Self {
+            let index = u32::from_be_bytes(payload[0..4].try_into().expect("slice length not 4"));
+            let begin = u32::from_be_bytes(payload[4..8].try_into().expect("slice length not 4"));
+            Self {
+                index: index,
+                begin: begin,
+                block: payload.split_off(8),
+            }
+        }
+    }
+
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bytes::BytesMut;
-    use clap::builder::Str;
     use tokio_util::codec::Decoder;
     use std::fs;
 
@@ -429,95 +296,16 @@ mod tests {
 
     #[test]
     fn test_my_message_decoder_4() {
-        /// test to see if the 1st bit of the encoded codec is 0 
+        // test to see if the 1st bit of the encoded codec is 0 
         
         let content = fs::read("magnet.file").expect("Read file");
-        let extension_payload: ExtensionPayloadPayload = serde_bencode::from_bytes(&content).expect("Convert file to a struct");
-        let payload = serde_bencode::to_bytes(&extension_payload).unwrap();
-        
+        let extension_handshake: ExtensionHandshake = serde_bencode::from_bytes(&content).expect("Convert file to a struct");        
         let extension_payload_payload = ExtensionPayload { 
                 extension_id: 0, 
-                payload: extension_payload 
+                payload: ExtensionType::ExtensionHandshakeMessage(extension_handshake) 
         };
         
-        println!("Sending extension payload bytes{:?}", extension_payload_payload.to_vec());
-
-        let extension_handshake = Message {
-            message_tag: MessageTag::Extension,
-            payload: Payload::ExtendedPayload(extension_payload_payload),
-        };
-        println!("Sending handshake{:?}", extension_handshake);
-        // println!("Sending payload bytes{:?}", payload);
-
-        let s = String::from_utf8(payload).expect("UTF8 conversion failed");
-        println!("Conversion string is {}", s);
-        // let length = payload.len() as u32 + 1;
-
-        // let mut buf = BytesMut::new();
-
-        // // Write length (4 bytes, BE)
-        // buf.extend_from_slice(&length.to_be_bytes());
-
-        // // Write message tag byte (e.g., 5 for Bitfield)
-        // buf.extend_from_slice(&[5]);
-
-        // // Write payload
-        // buf.extend_from_slice(&payload);
-
-        // // Run decoder
-        // let mut decoder = MessageFramer {};
-        // let result = decoder.decode(&mut buf).expect("Decoding failed");
-
-        // // Assert decoded message
-        // match result {
-        //     Some(msg) => {
-        //         assert_eq!(msg.message_tag, MessageTag::Bitfield);
-        //         assert_eq!(msg.payload, Payload::SimplePayload(payload));
-        //     }
-        //     None => panic!("Expected a decoded message, got None"),
-        // }
-    }
-}
-
-pub struct RequestPayload {
-    /// the zero-based piece index
-    pub index: u32,
-    ///  the zero-based byte offset within the piece
-    /// This'll be 0 for the first block, 2^14 for the second block, 2*2^14 for the third block etc.
-    pub begin: u32,
-    /// the length of the block in bytes
-    /// This'll be 2^14 (16 * 1024) for all blocks except the last one.
-    pub length: u32,
-}
-
-impl RequestPayload {
-    pub fn to_vec(&self) -> Vec<u8> {
-        // let mut vector: Vec<u8> = Vec::new();
-        let mut buf: [u8; 12] = [0u8; 12];
-        buf[0..4].copy_from_slice(&self.index.to_be_bytes());
-        buf[4..8].copy_from_slice(&self.begin.to_be_bytes());
-        buf[8..12].copy_from_slice(&self.length.to_be_bytes());
-        return buf.into();
-    }
-}
-pub struct ReceivePayload {
-    /// the zero-based piece index
-    pub index: u32,
-    ///  the zero-based byte offset within the piece
-    /// This'll be 0 for the first block, 2^14 for the second block, 2*2^14 for the third block etc.
-    pub begin: u32,
-    /// the data for the piece, usually 2^14 bytes long
-    pub block: Vec<u8>,
-}
-
-impl ReceivePayload {
-    pub fn new(payload: &mut Vec<u8>) -> Self {
-        let index = u32::from_be_bytes(payload[0..4].try_into().expect("slice length not 4"));
-        let begin = u32::from_be_bytes(payload[4..8].try_into().expect("slice length not 4"));
-        Self {
-            index: index,
-            begin: begin,
-            block: payload.split_off(8),
-        }
+        let bytes_payload = extension_payload_payload.to_vec();
+        assert_eq!(bytes_payload[0],0,"payload length mimatch");
     }
 }
