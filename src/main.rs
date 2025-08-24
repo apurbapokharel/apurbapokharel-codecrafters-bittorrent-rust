@@ -3,12 +3,14 @@ use codecrafters_bittorrent::{
     torrent::Torrent, 
     utils::{
         self, decode_bencoded_value, establish_handshake, establish_handshake_and_download, get_peers_from_tracker_url, read_and_deserialize_torrent
-    }
+    },
+    message::{Message, MessageTag, Payload},
 };
 use std::{net::SocketAddrV4};
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use hex;
+use futures_util::{sink::SinkExt, stream::StreamExt};
 
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
@@ -60,7 +62,12 @@ enum Type {
         output: String,
         magnet: String,
         index: usize,
-    }
+    },
+    MagnetDownload {
+        #[arg(short)]
+        output: String,
+        magnet: String,
+    },
 }
 
 // #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize)]
@@ -160,23 +167,57 @@ async fn main() -> anyhow::Result<()> {
             }    
         },
         Type::MagnetDownloadPiece { output, magnet, index } => {
-            let (torrent, mut strem)  = utils::get_magnet_metadata(magnet)
+            let (torrent,mut tcp_stream)  = utils::get_magnet_metadata(magnet)
                 .await
-                .context("Failed to receive magnet handshake")?;
-             
-            let mut res: Vec<u8> = Vec::new();
-            res = utils::fetch_a_piece(&torrent, &mut strem, *index)
+                .context("Failed to receive magnet meta data")?;
+
+            let message_to_send = Message {
+                message_tag: MessageTag::Interested,
+                payload: Payload::SimplePayload(Vec::new()),
+            };
+            let _message_sent = tcp_stream.send(message_to_send).await;
+           
+            let message_received = tcp_stream
+                .next()
+                .await
+                .expect("Expecting a unchoke")
+                .context("Message was invalid")?;
+            assert_eq!(message_received.message_tag, MessageTag::Unchoke);
+
+            let res: Vec<u8> = utils::fetch_a_piece(&torrent, &mut tcp_stream, *index)
                 .await
                 .context("Fetch a piece failed")?;
            
             tokio::fs::write(&output, res)
-            .await
-            .context("write out downloaded piece")?;
-    }
-    // res = fetch_all_pieces(&tor, &mut tcp_stream)
-    //     .await
-    //     .context("Fetch all piece failed")?;
+                .await
+                .context("write out downloaded piece")?;
+        },
+        Type::MagnetDownload{ output, magnet } => {
+            let (torrent,mut tcp_stream)  = utils::get_magnet_metadata(magnet)
+                .await
+                .context("Failed to receive magnet meta data")?;
 
+            let message_to_send = Message {
+                message_tag: MessageTag::Interested,
+                payload: Payload::SimplePayload(Vec::new()),
+            };
+            let _message_sent = tcp_stream.send(message_to_send).await;
+           
+            let message_received = tcp_stream
+                .next()
+                .await
+                .expect("Expecting a unchoke")
+                .context("Message was invalid")?;
+            assert_eq!(message_received.message_tag, MessageTag::Unchoke);
+
+            let res: Vec<u8> = utils::fetch_all_pieces(&torrent, &mut tcp_stream)
+                .await
+                .context("Fetch all piece failed")?;
+           
+            tokio::fs::write(&output, res)
+                .await
+                .context("write all downloaded piece")?;
+        },
     }
     Ok(())
 }

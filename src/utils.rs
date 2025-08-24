@@ -240,7 +240,7 @@ pub async fn fetch_a_piece(
             payload: Payload::SimplePayload(payload),
         };
         let _message_sent = tcp_stream.send(message_to_send).await;
-        // println!("Sent {:?}", message_sent);
+        // println!("Sent {:?}", _message_sent);
         //TODO need a better check
         //assert_eq!(message_sent.unwrap(), ());
 
@@ -249,6 +249,7 @@ pub async fn fetch_a_piece(
             .await
             .expect("Expexting a unchoke")
             .context("Message was invalid")?;
+        // println!("received");
         assert_eq!(message_received.message_tag, MessageTag::Piece);
         if let Payload::SimplePayload(mut vector) = message_received.payload {
             assert!(!&vector.is_empty());
