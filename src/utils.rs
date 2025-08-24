@@ -4,8 +4,13 @@ use crate::{
     message::{Message, MessageFramer, MessageTag, Payload, requestpayload::{ReceivePayload, RequestPayload}},
     httprequest::{Request, Response},
     torrent::Torrent,
+    extension::{
+        extensionhandshake::ExtensionHandshake, 
+        extensionmetadata::{ExtensionMetadata, MetaData}, 
+        extensionpayload::{ExtensionPayload, ExtensionType}
+    }, 
 };
-use anyhow::Context;
+use anyhow::{Context};
 use futures_util::{sink::SinkExt, stream::StreamExt};
 use sha1::{Digest, Sha1};
 use std::{fs, net::SocketAddrV4};
@@ -198,7 +203,7 @@ pub async fn establish_handshake_and_download(
     Ok(())
 }
 
-async fn fetch_a_piece(
+pub async fn fetch_a_piece(
     tor: &Torrent,
     tcp_stream: &mut Framed<TcpStream, MessageFramer>,
     piece_index: usize,
@@ -269,7 +274,7 @@ async fn fetch_a_piece(
     Ok(blocks)
 }
 
-async fn fetch_all_pieces(
+pub async fn fetch_all_pieces(
     tor: &Torrent,
     tcp_stream: &mut Framed<TcpStream, MessageFramer>,
 ) -> anyhow::Result<Vec<u8>> {
@@ -303,4 +308,128 @@ pub async fn get_peers_from_magnet(magnet: &Magnet) -> anyhow::Result<Response> 
     let response: Response =
         serde_bencode::from_bytes(&response).context("Decoding response to response struct")?;
     Ok(response)
+}
+
+pub async fn magnet_handshake(magnet: &String) -> anyhow::Result<(ExtensionHandshake, Framed<TcpStream, MessageFramer>)>{
+    let magnet: Magnet = Magnet::new(magnet).context("Parsing failed")?;
+    let response = get_peers_from_magnet(&magnet)
+        .await
+        .context("Failed to get peers")?;
+    let info_hash = magnet.info_hash_to_slice();
+    let peer = &response.peers.0[0];
+    let reserved: [u8; 8] = [0, 0, 0, 0, 0, 16, 0, 0];
+
+    let mut tcp_stream = TcpStream::connect(peer)
+        .await
+        .context("TCP connection to peer")?;
+    let peer_id: [u8; 20] = *b"ABCDEFGHIJKLMNOPQRST"; // exactly 20 bytes
+    let handshake_message = Handshake {
+        protocol_name: *b"BitTorrent protocol",
+        protocol_length: 19,
+        reserved: reserved,
+        info_hash: info_hash,
+        peer_id: peer_id,
+    };
+    tcp_stream
+        .write_all(&handshake_message.as_bytes())
+        .await
+        .context("Sending Handshake")?;
+    let mut res = [0u8; 68];
+    tcp_stream
+        .read_exact(&mut res)
+        .await
+        .context("Read from peers")?;
+    let peer_id = hex::encode(&res[48..]);
+    let info_hash_received = &res[28..48];
+    let peer_reserved_bit = &res[20..28];
+    assert_eq!(info_hash_received, info_hash, "Info Hash Mismatch");
+    println!("Peer ID: {}", peer_id);
+   
+    // send bitfield
+    // no need to do for this challenge
+    let codec = MessageFramer;
+    let mut tcp_stream = Framed::new(tcp_stream, codec);
+
+    //get bitfield
+    let _response = tcp_stream
+        .next()
+        .await
+        .expect("Expecting a bitfield message")
+        .context("Failed to get bitfield")?;
+    // assert!(!response.payload.is_empty());
+    if peer_reserved_bit[2].eq(&reserved[2]) {
+        let content = fs::read("magnet.file").context("Read file")?;
+        let extension_handshake: ExtensionHandshake = serde_bencode::from_bytes(&content).context("Convert file to a struct")?;
+        let extension_payload = ExtensionPayload { 
+            extension_id: 0, 
+            payload: ExtensionType::ExtensionHandshakeMessage(extension_handshake) 
+        };
+        let extension_handshake_message = Message {
+            message_tag: MessageTag::Extension,
+            payload: Payload::ExtendedPayload(extension_payload),
+        };
+        let _ = tcp_stream.send(extension_handshake_message).await;
+
+        //receive extension handshake
+        let extension_reply = tcp_stream
+            .next()
+            .await
+            .expect("Expecting extension handshake reply")
+            .context("Failed to get reply message")?;
+
+        if let Payload::ExtendedPayload(extension_payload) = extension_reply.payload{
+            if let ExtensionType::ExtensionHandshakeMessage(handshake_payload) = extension_payload.payload{
+                return Ok((handshake_payload, tcp_stream));
+            }
+        }
+        panic!("Invalid Payload Received")
+    } 
+    panic!("Peer does not supprt extension")
+}
+
+pub async fn get_magnet_metadata(magnet: &String) -> anyhow::Result<(Torrent, Framed<TcpStream, MessageFramer>)>{
+    let parsed_magnet: Magnet = Magnet::new(&magnet).context("Parsing failed")?;
+    // perform extension handshake with peer
+    let (extension_payload, mut tcp_stream) = magnet_handshake(magnet)
+        .await
+        .context("Failed to receive magnet handshake")?;
+
+    let peer_metadata = extension_payload.m.ut_metadata;
+    let extension_metadata_request = ExtensionMetadata::Request(
+        MetaData{
+            msg_type: 0,
+            piece: 0
+        }
+    );
+
+    let extension_metadata_payload = ExtensionPayload{
+        extension_id: peer_metadata,
+        payload: ExtensionType::MetaDataMessage(extension_metadata_request)
+    };
+
+    let extension_metadata_message = Message {
+        message_tag: MessageTag::Extension,
+        payload: Payload::ExtendedPayload(extension_metadata_payload),
+    };
+
+    let _res = tcp_stream.send(extension_metadata_message).await.context("Sending failed");
+
+    let extension_metadata_reply = tcp_stream
+        .next()
+        .await
+        .expect("Expecting extension metadata reply")
+        .context("Failed to get reply message")?;
+
+    if let Payload::ExtendedPayload(extension_payload) = extension_metadata_reply.payload{
+        if let ExtensionType::MetaDataMessage(ExtensionMetadata::Data(_message, info)) = extension_payload.payload{
+          
+            let torrent = Torrent{
+                announce: parsed_magnet.url,
+                info
+            };
+            assert_eq!(hex::encode(&torrent.info_hash()), parsed_magnet.info_hash, "Info hash mismatch");
+            return Ok((torrent, tcp_stream));
+        }
+    }
+    panic!("Unrecognized payload received");
 }

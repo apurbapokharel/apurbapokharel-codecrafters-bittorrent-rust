@@ -28,7 +28,7 @@ pub struct DataMetaData{
 
 #[cfg(test)]
 mod tests {
-    use crate::extension::extensionmetadata::{DataMetaData, ExtensionMetadata, MetaData};
+    use crate::extension::extensionmetadata::{ ExtensionMetadata, MetaData};
 
     #[test]
     fn test_bencode_enum() {

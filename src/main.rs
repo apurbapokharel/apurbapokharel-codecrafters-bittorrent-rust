@@ -1,18 +1,11 @@
 use codecrafters_bittorrent::{
-    extension::{
-        extensionhandshake::ExtensionHandshake, extensionmetadata::{ExtensionMetadata, MetaData}, extensionpayload::{ExtensionPayload, ExtensionType}
-    }, handshake::Handshake, magnet::Magnet, message::{ Message, MessageFramer, MessageTag, Payload}, torrent::Torrent, utils::{
-        decode_bencoded_value, establish_handshake, establish_handshake_and_download,
-        get_peers_from_magnet, get_peers_from_tracker_url, read_and_deserialize_torrent,
+    magnet::Magnet, 
+    torrent::Torrent, 
+    utils::{
+        self, decode_bencoded_value, establish_handshake, establish_handshake_and_download, get_peers_from_tracker_url, read_and_deserialize_torrent
     }
 };
-use futures_util::{sink::SinkExt, stream::StreamExt};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-};
-use tokio_util::codec::Framed;
-use std::{fs, net::SocketAddrV4};
+use std::{net::SocketAddrV4};
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use hex;
@@ -61,6 +54,12 @@ enum Type {
     },
     MagnetInfo{
         magnet: String
+    },
+    MagnetDownloadPiece{
+        #[arg(short)]
+        output: String,
+        magnet: String,
+        index: usize,
     }
 }
 
@@ -142,209 +141,42 @@ async fn main() -> anyhow::Result<()> {
             println!("Info Hash: {}", &magnet.info_hash);
         }
         Type::MagnetHandshake { magnet } => {
-            let magnet: Magnet = Magnet::new(&magnet).context("Parsing failed")?;
-            let response = get_peers_from_magnet(&magnet)
+            let (extension_payload,_)  = utils::magnet_handshake(magnet)
                 .await
-                .context("Failed to get peers")?;
-            let info_hash = magnet.info_hash_to_slice();
-            let peer = &response.peers.0[0];
-            let reserved: [u8; 8] = [0, 0, 0, 0, 0, 16, 0, 0];
-
-            let mut tcp_stream = TcpStream::connect(peer)
-                .await
-                .context("TCP connection to peer")?;
-            let peer_id: [u8; 20] = *b"ABCDEFGHIJKLMNOPQRST"; // exactly 20 bytes
-            let handshake_message = Handshake {
-                protocol_name: *b"BitTorrent protocol",
-                protocol_length: 19,
-                reserved: reserved,
-                info_hash: info_hash,
-                peer_id: peer_id,
-            };
-            tcp_stream
-                .write_all(&handshake_message.as_bytes())
-                .await
-                .context("Sending Handshake")?;
-            let mut res = [0u8; 68];
-            tcp_stream
-                .read_exact(&mut res)
-                .await
-                .context("Read from peers")?;
-            let peer_id = hex::encode(&res[48..]);
-            let info_hash_received = &res[28..48];
-            let peer_reserved_bit = &res[20..28];
-            assert_eq!(info_hash_received, info_hash, "Info Hash Mismatch");
-            println!("Peer ID: {}", peer_id);
-            // println!("Peer Info Hash: {:?}", info_hash_received);
-            // println!("Peer Reserved Bit: {:?}", peer_reserved_bit);
-
-            // send bitfield
-            // no need to do for this challenge
-            let codec = MessageFramer;
-            let mut tcp_stream = Framed::new(tcp_stream, codec);
-    
-            //get bitfield
-            let _response = tcp_stream
-                .next()
-                .await
-                .expect("Expecting a bitfield message")
-                .context("Failed to get bitfield")?;
-            // assert!(!response.payload.is_empty());
-            if peer_reserved_bit[2].eq(&reserved[2]) {
-                let content = fs::read("magnet.file").context("Read file")?;
-                let extension_handshake: ExtensionHandshake = serde_bencode::from_bytes(&content).context("Convert file to a struct")?;
-                let extension_payload = ExtensionPayload { 
-                    extension_id: 0, 
-                    payload: ExtensionType::ExtensionHandshakeMessage(extension_handshake) 
-                };
-
-                let extension_handshake_message = Message {
-                    message_tag: MessageTag::Extension,
-                    payload: Payload::ExtendedPayload(extension_payload),
-                };
-                let _ = tcp_stream.send(extension_handshake_message).await;
-
-                //receive extension handshake
-                let extension_reply = tcp_stream
-                    .next()
-                    .await
-                    .expect("Expecting extension handshake reply")
-                    .context("Failed to get reply message")?;
-
-                // println!("{:?}", extension_reply);
-                if let Payload::ExtendedPayload(extension_payload) = extension_reply.payload{
-                    if let ExtensionType::ExtensionHandshakeMessage(handshake_payload) = extension_payload.payload{
-                        println!("Peer Metadata Extension ID: {:?}", handshake_payload.m.ut_metadata);
-                    }
-                }
-            } else {
-                println!("Extension not supported {:?}", peer_reserved_bit);
-            }
+                .context("Failed to receive magnet handshake")?;
+            println!("Peer Metadata Extension ID: {:?}", extension_payload.m.ut_metadata);
         },
         Type::MagnetInfo { magnet } => {
-            let magnet: Magnet = Magnet::new(&magnet).context("Parsing failed")?;
-            let response = get_peers_from_magnet(&magnet)
+            let (torrent,_)  = utils::get_magnet_metadata(magnet)
                 .await
-                .context("Failed to get peers")?;
-            let info_hash = magnet.info_hash_to_slice();
-            let peer = &response.peers.0[0];
-            let reserved: [u8; 8] = [0, 0, 0, 0, 0, 16, 0, 0];
-
-            let mut tcp_stream = TcpStream::connect(peer)
+                .context("Failed to receive magnet handshake")?;
+            println!("Tracker URL: {}", torrent.announce);
+            println!("Length: {}", torrent.info.length);
+            println!("Info Hash: {}", hex::encode(&torrent.info_hash()));
+            println!("Piece Length: {}", &torrent.info.pieces_length);
+            println!("Piece Hashes:");
+            for piece in &torrent.info.pieces.0{
+                println!("{}", hex::encode(piece));
+            }    
+        },
+        Type::MagnetDownloadPiece { output, magnet, index } => {
+            let (torrent, mut strem)  = utils::get_magnet_metadata(magnet)
                 .await
-                .context("TCP connection to peer")?;
-            let peer_id: [u8; 20] = *b"ABCDEFGHIJKLMNOPQRST"; // exactly 20 bytes
-            let handshake_message = Handshake {
-                protocol_name: *b"BitTorrent protocol",
-                protocol_length: 19,
-                reserved: reserved,
-                info_hash: info_hash,
-                peer_id: peer_id,
-            };
-            tcp_stream
-                .write_all(&handshake_message.as_bytes())
+                .context("Failed to receive magnet handshake")?;
+             
+            let mut res: Vec<u8> = Vec::new();
+            res = utils::fetch_a_piece(&torrent, &mut strem, *index)
                 .await
-                .context("Sending Handshake")?;
-            let mut res = [0u8; 68];
-            tcp_stream
-                .read_exact(&mut res)
-                .await
-                .context("Read from peers")?;
-            let peer_id = hex::encode(&res[48..]);
-            let info_hash_received = &res[28..48];
-            let peer_reserved_bit = &res[20..28];
-            assert_eq!(info_hash_received, info_hash, "Info Hash Mismatch");
-            // println!("Peer ID: {}", peer_id);
-            // println!("Peer Info Hash: {:?}", info_hash_received);
-            // println!("Peer Reserved Bit: {:?}", peer_reserved_bit);
+                .context("Fetch a piece failed")?;
+           
+            tokio::fs::write(&output, res)
+            .await
+            .context("write out downloaded piece")?;
+    }
+    // res = fetch_all_pieces(&tor, &mut tcp_stream)
+    //     .await
+    //     .context("Fetch all piece failed")?;
 
-            // send bitfield
-            // no need to do for this challenge
-            let codec = MessageFramer;
-            let mut tcp_stream = Framed::new(tcp_stream, codec);
-    
-            //get bitfield
-            let _response = tcp_stream
-                .next()
-                .await
-                .expect("Expecting a bitfield message")
-                .context("Failed to get bitfield")?;
-            // assert!(!response.payload.is_empty());
-            if peer_reserved_bit[2].eq(&reserved[2]) {
-                let content = fs::read("magnet.file").context("Read file")?;
-                let extension_handshake: ExtensionHandshake = serde_bencode::from_bytes(&content).context("Convert file to a struct")?;
-                let extension_payload = ExtensionPayload { 
-                    extension_id: 0, 
-                    payload: ExtensionType::ExtensionHandshakeMessage(extension_handshake) 
-                };
-                
-                let extension_handshake_message = Message {
-                    message_tag: MessageTag::Extension,
-                    payload: Payload::ExtendedPayload(extension_payload),
-                };
-
-                let _ = tcp_stream.send(extension_handshake_message).await;
-
-                //receive extension handshake
-                let extension_reply = tcp_stream
-                    .next()
-                    .await
-                    .expect("Expecting extension handshake reply")
-                    .context("Failed to get reply message")?;
-
-                // println!("{:?}", extension_reply);
-                if let Payload::ExtendedPayload(extension_payload) = extension_reply.payload{
-                    if let ExtensionType::ExtensionHandshakeMessage(handshake_payload) = extension_payload.payload{
-                        let peer_metadata = handshake_payload.m.ut_metadata;
-                        // println!("Peer Metadata Extension ID: {:?}", &peer_metadata);
-                        let extension_metadata_request = ExtensionMetadata::Request(
-                            MetaData{
-                                msg_type: 0,
-                                piece: 0
-                            }
-                        );
-
-                        let extension_metadata_payload = ExtensionPayload{
-                            extension_id: peer_metadata,
-                            payload: ExtensionType::MetaDataMessage(extension_metadata_request)
-                        };
-
-                        let extension_metadata_message = Message {
-                            message_tag: MessageTag::Extension,
-                            payload: Payload::ExtendedPayload(extension_metadata_payload),
-                        };
-
-                        let _res = tcp_stream.send(extension_metadata_message).await.context("Sending failed");
-
-                        let extension_metadata_reply = tcp_stream
-                            .next()
-                            .await
-                            .expect("Expecting extension metadata reply")
-                            .context("Failed to get reply message")?;
-
-                        //assertions 
-                        if let Payload::ExtendedPayload(extension_payload) = extension_metadata_reply.payload{
-                            if let ExtensionType::MetaDataMessage(ExtensionMetadata::Data(_message, info)) = extension_payload.payload{
-                                println!("Tracker URL: {}", magnet.url);
-                                println!("Length: {}", info.length);
-                                let torrent = Torrent{
-                                    announce: magnet.url,
-                                    info
-                                };
-                                assert_eq!(hex::encode(&torrent.info_hash()), magnet.info_hash, "Info hash mismatch");
-                                println!("Info Hash: {}", hex::encode(&torrent.info_hash()));
-                                println!("Piece Length: {}", &torrent.info.pieces_length);
-                                println!("Piece Hashes:");
-                                for piece in &torrent.info.pieces.0{
-                                    println!("{}", hex::encode(piece));
-                                }
-                            }
-                        }
-
-                    }
-                }
-            }
-        }
     }
     Ok(())
 }

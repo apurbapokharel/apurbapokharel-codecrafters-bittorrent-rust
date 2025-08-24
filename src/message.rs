@@ -7,7 +7,7 @@ use crate::{
     torrent::Info,
     extension::{
         extensionhandshake::ExtensionHandshake, 
-        extensionmetadata::{DataMetaData, ExtensionMetadata, MetaData}, 
+        extensionmetadata::{DataMetaData, ExtensionMetadata}, 
         extensionpayload::{ExtensionPayload, ExtensionType}
     }
 };
