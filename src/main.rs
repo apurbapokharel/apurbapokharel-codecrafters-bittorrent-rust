@@ -254,7 +254,7 @@ async fn main() -> anyhow::Result<()> {
             let info_hash_received = &res[28..48];
             let peer_reserved_bit = &res[20..28];
             assert_eq!(info_hash_received, info_hash, "Info Hash Mismatch");
-            println!("Peer ID: {}", peer_id);
+            // println!("Peer ID: {}", peer_id);
             // println!("Peer Info Hash: {:?}", info_hash_received);
             // println!("Peer Reserved Bit: {:?}", peer_reserved_bit);
 
@@ -296,7 +296,7 @@ async fn main() -> anyhow::Result<()> {
                 if let Payload::ExtendedPayload(extension_payload) = extension_reply.payload{
                     if let ExtensionType::ExtensionHandshakeMessage(handshake_payload) = extension_payload.payload{
                         let peer_metadata = handshake_payload.m.ut_metadata;
-                        println!("Peer Metadata Extension ID: {:?}", &peer_metadata);
+                        // println!("Peer Metadata Extension ID: {:?}", &peer_metadata);
                         let extension_metadata_request = ExtensionMetadata::Request(
                             MetaData{
                                 msg_type: 0,
@@ -315,6 +315,32 @@ async fn main() -> anyhow::Result<()> {
                         };
 
                         let _res = tcp_stream.send(extension_metadata_message).await.context("Sending failed");
+
+                        let extension_metadata_reply = tcp_stream
+                            .next()
+                            .await
+                            .expect("Expecting extension metadata reply")
+                            .context("Failed to get reply message")?;
+
+                        //assertions 
+                        if let Payload::ExtendedPayload(extension_payload) = extension_metadata_reply.payload{
+                            if let ExtensionType::MetaDataMessage(ExtensionMetadata::Data(_message, info)) = extension_payload.payload{
+                                println!("Tracker URL: {}", magnet.url);
+                                println!("Length: {}", info.length);
+                                let torrent = Torrent{
+                                    announce: magnet.url,
+                                    info
+                                };
+                                assert_eq!(hex::encode(&torrent.info_hash()), magnet.info_hash, "Info hash mismatch");
+                                println!("Info Hash: {}", hex::encode(&torrent.info_hash()));
+                                println!("Piece Length: {}", &torrent.info.pieces_length);
+                                println!("Piece Hashes:");
+                                for piece in &torrent.info.pieces.0{
+                                    println!("{}", hex::encode(piece));
+                                }
+                            }
+                        }
+
                     }
                 }
             }

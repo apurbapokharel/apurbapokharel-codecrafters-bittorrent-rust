@@ -1,8 +1,16 @@
+use core::panic;
+
 use bytes::{Buf, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
-use crate::extension::{
-        extensionpayload::{ExtensionPayload, ExtensionType},
-        extensionhandshake::ExtensionHandshake};
+use crate::{
+    constant, 
+    torrent::Info,
+    extension::{
+        extensionhandshake::ExtensionHandshake, 
+        extensionmetadata::{DataMetaData, ExtensionMetadata, MetaData}, 
+        extensionpayload::{ExtensionPayload, ExtensionType}
+    }
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum MessageTag {
@@ -65,6 +73,7 @@ pub enum Payload {
 
 pub struct MessageFramer;
 const MAX: usize = 2 * 16 * 1024; // 2^15
+const EXTNSION_ID: u8 = constant::get_extension_id();
 
 /// The 1st 4 bytes gives playload length + message_type
 impl Decoder for MessageFramer {
@@ -116,13 +125,26 @@ impl Decoder for MessageFramer {
         src.advance(4 + length);
         let mut payload = Payload::SimplePayload(data.clone());
         if message_tag == MessageTag::Extension {
-            assert_eq!(*&data[0],0 as u8,"extension id should be 0");
-            let extension_handshake: ExtensionHandshake =
-                serde_bencode::from_bytes(&data[1..]).expect("Serde bencode failed");
-            payload = Payload::ExtendedPayload(ExtensionPayload { 
-                extension_id: 0, 
-                payload: ExtensionType::ExtensionHandshakeMessage(extension_handshake)  
-            });
+            match data[0] {
+                0 => {
+                    let extension_handshake: ExtensionHandshake =
+                        serde_bencode::from_bytes(&data[1..]).expect("Serde bencode failed");
+                        payload = Payload::ExtendedPayload(ExtensionPayload { 
+                            extension_id: 0, 
+                            payload: ExtensionType::ExtensionHandshakeMessage(extension_handshake)  
+                    }); 
+                },
+                v if v == EXTNSION_ID => {
+                    let extension_metadata_data: DataMetaData = serde_bencode::from_bytes(&data[1..]).expect("Serde bencode failed");                   
+                    let i = &data[1..].len() - extension_metadata_data.total_size as usize + 1;
+                    let info : Info = serde_bencode::from_bytes(&data[i..]).expect("Conversion to Info failed");
+                    payload = Payload::ExtendedPayload(ExtensionPayload { 
+                        extension_id: 0, 
+                        payload: ExtensionType::MetaDataMessage(ExtensionMetadata::Data(extension_metadata_data, info))  
+                    }); 
+                },
+                _ => panic!("Unexpected extension payload")
+            };
         }
         Ok(Some(Message {
             message_tag,
@@ -219,7 +241,7 @@ mod tests {
     use super::*;
     use bytes::BytesMut;
     use tokio_util::codec::Decoder;
-    use std::fs;
+    use std::{fs, panic};
 
     #[test]
     fn test_my_message_decoder() {

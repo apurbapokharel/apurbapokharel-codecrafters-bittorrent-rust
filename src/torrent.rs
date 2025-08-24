@@ -31,6 +31,16 @@ pub struct Info{
     pub pieces: Pieces,
 }
 
+impl PartialEq for Info {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare only the fields you care about
+        todo!("Info Struct's partial eq needs work")
+    }
+}
+
+// Then implement Eq (marker trait)
+impl Eq for Info {}
+
 mod pieces{
     use serde::de::{ Deserialize};
     use serde::ser::{Serialize, Serializer};

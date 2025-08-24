@@ -5,3 +5,4 @@ pub mod httprequest;
 pub mod torrent;
 pub mod utils;
 pub mod extension;
+pub mod constant;
