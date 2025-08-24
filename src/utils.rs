@@ -228,7 +228,7 @@ pub async fn fetch_a_piece(
         } else {
             piece_size - (16 * 1024 * (num_of_blocks - 1))
         };
-        println!("Block index = {} and Block size = {}", block, block_size);
+        // println!("Block index = {} and Block size = {}", block, block_size);
         let request_message = RequestPayload {
             index: piece_index as u32,
             begin: begin,
